@@ -1,0 +1,7 @@
+# 探針／除錯產物 —— 唔應該發佈
+_probe*.html
+*.raw.html
+
+# 作業系統
+Thumbs.db
+.DS_Store

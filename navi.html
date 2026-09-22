@@ -1,0 +1,3406 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>無障礙出行助手 · Accessibility Travel Assistant</title>
+<meta name="description" content="為長者及輪椅使用者而設的九龍塘無障礙步行導航">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.12.0/mapbox-gl.css" rel="stylesheet">
+<style>
+/* ============================================================
+   設計代幣 —— 全部以「長者優先」為前提
+   對比 AAA ≥7:1 · 正文 ≥24px · 觸控 ≥60px · 主要按鈕 80px
+   ============================================================ */
+:root{
+  --color-primary:#1A237E;
+  --color-primary-soft:#E8EAF6;
+  --color-bg:#FFF8F0;
+  --color-surface:#FFFFFF;
+  --color-ink:#1A1A1A;
+  --color-ink-soft:#3E3E3E;
+  --color-muted:#5A5A5A;
+  --color-border:#8A8A8A;
+  --color-lift:#0D47A1;
+  --color-ramp:#2E7D32;
+  --color-covered:#E65100;
+  --color-covered-glow:rgba(230,81,0,.45);
+  --color-escalator:#6A1B9A;
+  --color-warn:#B71C1C;
+  --color-warn-bg:#FFEBEE;
+  --color-ok:#1B5E20;
+  --color-ok-bg:#E8F5E9;
+  --color-focus:#FF6D00;
+
+  /* 字級：冇任何一級低於 24px */
+  --fs-turn:36px;
+  --fs-metric:30px;
+  --fs-btn:28px;
+  --fs-body:26px;
+  --fs-small:24px;
+
+  --tap:60px;
+  --tap-primary:80px;
+
+  --radius:16px;
+  --radius-sm:10px;
+  --shadow:0 3px 14px rgba(0,0,0,.18);
+  --gap:14px;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--color-bg);
+  color:var(--color-ink);
+  font-family:Nunito,'PingFang HK','Microsoft JhengHei','Noto Sans TC',sans-serif;
+  font-size:var(--fs-body);
+  line-height:1.45;
+  -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:600px;margin:0 auto;padding:0 14px 120px}
+
+/* 跳至主要內容 —— 鍵盤使用者第一個 Tab 就到 */
+.skip{
+  position:absolute;left:-9999px;top:0;z-index:100;
+  background:var(--color-primary);color:#fff;padding:14px 20px;
+  font-size:var(--fs-btn);border-radius:0 0 var(--radius-sm) 0;
+}
+.skip:focus{left:0}
+
+/* 焦點環 —— 4px，全站一致 */
+:focus-visible{
+  outline:4px solid var(--color-focus);
+  outline-offset:3px;
+  border-radius:var(--radius-sm);
+}
+
+h1{
+  font-size:var(--fs-body);font-weight:800;
+  margin:14px 0 6px;color:var(--color-primary);
+  display:flex;align-items:center;gap:10px;
+}
+h1 svg{flex:none}
+
+/* ---------- 語言切換 ---------- */
+.langbar{display:flex;gap:10px;justify-content:flex-end;margin-bottom:8px}
+.lang-btn{
+  display:flex;align-items:center;gap:8px;
+  min-height:var(--tap);padding:8px 18px;
+  font-size:var(--fs-small);font-weight:700;font-family:inherit;
+  color:var(--color-primary);background:var(--color-surface);
+  border:3px solid var(--color-primary);border-radius:999px;cursor:pointer;
+}
+.lang-btn[aria-pressed="true"]{background:var(--color-primary);color:#fff}
+.lang-btn svg{flex:none}
+
+/* ---------- 大指令卡 ---------- */
+.card{
+  background:var(--color-surface);
+  border:3px solid var(--color-primary);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:16px;
+  margin-bottom:var(--gap);
+}
+#instruction{
+  display:flex;align-items:center;gap:16px;
+  background:var(--color-primary);color:#fff;border-color:var(--color-primary);
+}
+#turn-arrow{
+  flex:none;width:76px;height:76px;
+  transition:transform .25s ease;
+}
+#instr-text{font-size:var(--fs-turn);font-weight:800;line-height:1.2}
+#instr-sub{font-size:var(--fs-small);font-weight:600;opacity:.95;margin-top:4px}
+#instr-warn{
+  margin-top:10px;font-size:var(--fs-small);font-weight:700;
+  background:#fff;color:var(--color-warn);
+  border:3px solid var(--color-warn);border-radius:var(--radius-sm);
+  padding:8px 12px;display:none;
+}
+#instr-warn.on{display:block}
+
+/* ---------- 置頂區（指令卡 ＋ 地圖一齊 pin） ----------
+   注意：祖先一旦有 overflow:hidden 就會令 sticky 失效。.wrap 同 body
+   都冇設 overflow，所以呢度行得通。 */
+.hero{
+  position:sticky;top:0;z-index:15;
+  background:var(--color-bg);
+  padding:10px 0 var(--gap);
+  /* 收窄嘅陰影，令下面嘅內容滾過嗰時睇得出係「壓住」 */
+  box-shadow:0 8px 14px -10px rgba(26,35,126,.55);
+}
+
+/* ---------- 地圖 ---------- */
+/* 地圖高度 = 「視窗高度減去固定開支」，唔係一個固定 vh 百分比。
+ *
+ * hero 係置頂嘅，佢有幾高直接決定下面仲剩幾多位俾路線卡／質素卡／控制面板捲。
+ * 之前用 `38vh` + `max-height`：喺 1422×1104 只出到 380px，佔螢幕 34%，
+ * 用戶兩次話「佔比太小」。改用 clamp 之後地圖會自己食晒剩低嘅空間 ——
+ * 同一個視窗出 560px（51%）。
+ *
+ * `100vh − 430px` 嗰 430 係實測出嚟嘅固定開支：指令卡連 padding 約 158px
+ * （≥24px 字級下限令佢冇得再矮），加約 270px 內容帶（要見到路線卡同質素卡
+ * 嘅頭幾行）。1vh/1dvh 兩行係漸進增強：手機工具列會令 100vh 高過實際可視
+ * 高度，支援 dvh 嘅瀏覽器用第二行。 */
+#map{
+  height:clamp(240px, calc(100vh - 430px), 560px);
+  height:clamp(240px, calc(100dvh - 430px), 560px);
+  width:100%;
+  border:3px solid var(--color-primary);border-radius:var(--radius);
+  background:#DDE3EA;
+}
+/* 矮視窗：hero 佔細啲，否則 hero ＋ 底部面板會高過視口，中間嘅卡片完全睇唔到。
+   呢條線以下「面板完整入到 hero 以下」根本冇可能成立（608 高：386+463 > 608），
+   所以呢度只求 hero 唔好霸晒。預留額由 430 收到 380，即係矮窗都分多 50px 俾地圖。 */
+@media (max-height:720px){
+  #map{
+    height:clamp(170px, calc(100vh - 380px), 300px);
+    height:clamp(170px, calc(100dvh - 380px), 300px);
+  }
+}
+.mapboxgl-ctrl-group button{
+  width:var(--tap) !important;height:var(--tap) !important;
+}
+.mapboxgl-ctrl-group button span{transform:scale(1.5)}
+
+/* 設施標記嘅 60px 點擊區。圖形本身維持 40px（雨天 56px），
+   但觸控目標要 ≥60px —— 長者手指唔可能篤中 40px 嘅圓形。 */
+.fac-hit{
+  width:60px;height:60px;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+}
+/* 彈出框：同站內字體一致，≥24px，顏色用 AA/AAA 對比 */
+.fac-pop{
+  display:flex;flex-direction:column;gap:2px;
+  font-family:Nunito,'PingFang HK','Microsoft JhengHei','Noto Sans TC',sans-serif;
+  font-size:var(--fs-small);line-height:1.35;color:var(--color-ink);
+}
+.fac-pop strong{font-size:var(--fs-body);font-weight:800;color:var(--color-primary)}
+.mapboxgl-popup-content{border-radius:var(--radius-sm) !important;padding:12px 14px !important}
+.mapboxgl-popup-close-button{font-size:30px !important;width:44px !important;height:44px !important;color:var(--color-ink)}
+
+/* ---------- 已報告障礙清單 ---------- */
+.report-list{margin:0;padding:0;list-style:none}
+.report-list li{
+  display:flex;align-items:center;gap:12px;
+  font-size:var(--fs-small);font-weight:700;
+  padding:10px 0;border-top:2px solid var(--color-primary-soft);
+}
+.report-list li:first-child{border-top:0}
+.report-list svg{flex:none;width:34px;height:34px}
+
+/* ---------- 底部控制面板 ----------
+ *
+ * 呢個本來叫 .sticky 而且係 `position:sticky;bottom:0`。加咗置頂 hero 之後
+ * 就唔可以留：實測面板本身高 460–520px（5 個 ≥80px 嘅掣排成 3 行已經 240px，
+ * 加進度條同圖例），hero 高 340–580px，兩個一齊 pin 就係 800–1100px。
+ * 1440×1200 實測仍然重疊 175px，中間嘅路線質素卡同報告清單被夾到完全摸唔到
+ * —— 而質素卡係「呢條路線到底可唔可靠」嘅唯一交代，唔可以遮。
+ *
+ * 取捨：用戶明確要求「地圖一直置頂」，所以保留 hero、放棄 pin 面板。
+ * 面板本來就係頁面最後一嚿，捲到底就撳得到。亦唔可以靠縮掣去遷就 ——
+ * 60/80px 觸控下限係硬規定。
+ *
+ * 順手改咗名做 .dock：一個叫 sticky 但唔 sticky 嘅 class 係陷阱。 */
+.dock{
+  position:relative;z-index:20;
+  background:var(--color-bg);
+  border-top:4px solid var(--color-primary);
+  padding:12px 0 16px;margin:0 -14px;padding-left:14px;padding-right:14px;
+}
+.progress-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+#prog-text{font-size:var(--fs-current,30px);font-weight:800;color:var(--color-primary)}
+.bar{
+  height:20px;background:var(--color-primary-soft);
+  border:2px solid var(--color-primary);border-radius:999px;
+  overflow:hidden;margin-top:8px;
+}
+#bar-fill{height:100%;width:0;background:var(--color-primary);transition:width .3s ease}
+
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  min-height:var(--tap-primary);
+  font-family:inherit;font-size:var(--fs-btn);font-weight:800;
+  color:#fff;background:var(--color-primary);
+  border:3px solid var(--color-primary);border-radius:var(--radius);
+  cursor:pointer;padding:8px;
+}
+.btn.secondary{background:var(--color-surface);color:var(--color-primary)}
+.btn.danger{background:var(--color-warn);border-color:var(--color-warn)}
+.btn[aria-pressed="true"]{background:#fff;color:var(--color-primary)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn svg{flex:none}
+.btn.full{grid-column:1 / -1}
+
+/* ---------- 路線選擇 ---------- */
+.route-btn{
+  display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+  width:100%;text-align:left;min-height:var(--tap-primary);
+  padding:14px 16px;margin-bottom:10px;
+  font-family:inherit;font-size:var(--fs-btn);font-weight:800;
+  color:var(--color-primary);background:var(--color-surface);
+  border:3px solid var(--color-primary);border-radius:var(--radius);cursor:pointer;
+}
+.route-btn .sub{font-size:var(--fs-small);font-weight:600;color:var(--color-ink-soft)}
+.route-btn[aria-pressed="true"]{background:var(--color-primary);color:#fff}
+.route-btn[aria-pressed="true"] .sub{color:#fff}
+
+/* ---------- 路線品質卡 ---------- */
+.q-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.q-item{
+  background:var(--color-primary-soft);border-radius:var(--radius-sm);
+  padding:10px 12px;
+}
+.q-label{font-size:var(--fs-small);font-weight:700;color:var(--color-ink-soft)}
+.q-value{font-size:var(--fs-metric);font-weight:800;color:var(--color-primary)}
+.q-bad{background:var(--color-warn-bg)}
+.q-bad .q-value{color:var(--color-warn)}
+.q-good{background:var(--color-ok-bg)}
+.q-good .q-value{color:var(--color-ok)}
+.q-note{font-size:var(--fs-small);font-weight:600;margin-top:10px;color:var(--color-ink-soft)}
+
+/* ---------- 圖例 ---------- */
+.legend{display:flex;flex-wrap:wrap;gap:12px 20px;margin-top:6px}
+.legend-item{display:flex;align-items:center;gap:10px;font-size:var(--fs-small);font-weight:700}
+.legend-item svg{flex:none;width:32px;height:32px;display:block}
+.lg-icon{display:flex;align-items:center}
+
+/* ---------- toast ---------- */
+#toast{
+  position:fixed;left:50%;transform:translateX(-50%);
+  bottom:24px;z-index:90;
+  max-width:560px;width:calc(100% - 32px);
+  background:var(--color-warn);color:#fff;
+  font-size:var(--fs-small);font-weight:700;
+  padding:16px 20px;border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  opacity:0;pointer-events:none;transition:opacity .2s ease;
+}
+#toast.on{opacity:1}
+
+/* ---------- 資料來源 ---------- */
+.credits{font-size:var(--fs-small);color:var(--color-muted);margin-top:10px;line-height:1.5}
+.credits a{color:var(--color-primary);font-weight:700}
+
+.sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
+}
+
+@media (max-width:400px){
+  :root{--fs-turn:32px;--fs-btn:26px;--fs-body:24px}
+  #turn-arrow{width:64px;height:64px}
+}
+
+/* 減少動態 —— 尊重系統設定 */
+@media (prefers-reduced-motion:reduce){
+  *{transition:none !important;animation:none !important}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#panel">跳至控制面板</a>
+
+<div class="wrap">
+
+  <div class="langbar">
+    <button class="lang-btn" id="lang-zh" type="button" aria-pressed="true">
+      <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18"/></svg>
+      廣東話
+    </button>
+    <button class="lang-btn" id="lang-en" type="button" aria-pressed="false">
+      <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18"/></svg>
+      English
+    </button>
+  </div>
+
+  <h1>
+    <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="4" r="2.2"/><path d="M12 6.5v6.5M12 13h5.5l3 6M12 13H6.5l-3 6M12 13l-3.5 7M12 13l3.5 7"/></svg>
+    <span id="app-title">無障礙出行助手</span>
+  </h1>
+
+  <!-- ===== 置頂區：指令卡 ＋ 地圖 =====
+       用戶要求「地圖一直置頂，往下滑都睇得到」。指令卡一定要一齊 pin ——
+       只 pin 地圖就會遮住「一眼要睇到」嘅指令卡，咁就本末倒置。 -->
+  <div class="hero">
+    <div class="card" id="instruction">
+      <svg id="turn-arrow" viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M24 42V14"/><path d="M13 25L24 14l11 11"/>
+      </svg>
+      <div>
+        <div id="instr-text">準備開始</div>
+        <div id="instr-sub">請先揀一條路線</div>
+        <div id="instr-warn"></div>
+      </div>
+    </div>
+
+    <div id="map" role="img" aria-label="九龍塘無障礙路線地圖"></div>
+  </div>
+
+  <div id="panel">
+
+    <!-- 路線選擇 -->
+    <div class="card" id="routes-card">
+      <div class="q-label" id="routes-label" style="margin-bottom:10px">揀目的地</div>
+      <button class="route-btn" id="route-A" type="button" aria-pressed="false">
+        <span id="route-A-name">輪椅路線 · 香港城市大學</span>
+        <span class="sub" id="route-A-sub">避樓梯 · 平路優先</span>
+      </button>
+      <button class="route-btn" id="route-B" type="button" aria-pressed="false">
+        <span id="route-B-name">晴雨路線 · 大坑東</span>
+        <span class="sub" id="route-B-sub">晴天露天 · 落雨多蓋</span>
+      </button>
+    </div>
+
+    <!-- 路線品質 -->
+    <div class="card" id="quality" hidden>
+      <div class="q-label" id="quality-title" style="margin-bottom:10px">路線質素</div>
+      <div class="q-grid">
+        <div class="q-item"><div class="q-label" id="q-len-label">距離</div><div class="q-value" id="q-len">–</div></div>
+        <div class="q-item"><div class="q-label" id="q-time-label">時間</div><div class="q-value" id="q-time">–</div></div>
+        <div class="q-item q-good" id="q-stairs-box"><div class="q-label" id="q-stairs-label">樓梯</div><div class="q-value" id="q-stairs">–</div></div>
+        <div class="q-item" id="q-slope-box"><div class="q-label" id="q-slope-label">最大坡度</div><div class="q-value" id="q-slope">–</div></div>
+        <div class="q-item" id="q-cover-box"><div class="q-label" id="q-cover-label">有蓋路段</div><div class="q-value" id="q-cover">–</div></div>
+        <div class="q-item"><div class="q-label" id="q-lift-label">升降機</div><div class="q-value" id="q-lift">–</div></div>
+      </div>
+      <div class="q-note" id="q-mode"></div>
+      <div class="q-note" id="q-compare"></div>
+      <div class="q-note" id="q-warn"></div>
+    </div>
+
+    <!-- 已報告嘅「此路不通」清單。清單用文字＋形狀圖示，
+         唔靠顏色單獨傳達意思（同圖例一致）。 -->
+    <div class="card" id="report-card" hidden>
+      <div class="q-label" id="report-title" style="margin-bottom:10px">已報告 0 處唔通</div>
+      <ul class="report-list" id="report-list"></ul>
+    </div>
+
+    <div class="dock">
+      <div class="progress-row">
+        <span id="prog-text">–</span>
+        <span id="prog-sub" style="font-size:var(--fs-small);font-weight:700;color:var(--color-ink-soft)"></span>
+      </div>
+      <div class="bar"><div id="bar-fill"></div></div>
+
+      <div class="controls">
+        <button class="btn" id="btn-play" type="button" disabled>
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>
+          <span id="btn-play-text">開始</span>
+        </button>
+        <button class="btn secondary" id="btn-repeat" type="button">
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 9V6.5A2.5 2.5 0 016.5 4H18"/><path d="M15 1l3.5 3L15 7"/><path d="M20 15v2.5a2.5 2.5 0 01-2.5 2.5H6"/><path d="M9 23l-3.5-3L9 17"/></svg>
+          <span id="btn-repeat-text">再講一次</span>
+        </button>
+        <button class="btn secondary" id="btn-weather" type="button" aria-pressed="false">
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"/></svg>
+          <span id="btn-weather-text">晴天</span>
+        </button>
+        <button class="btn secondary" id="btn-wheel" type="button" aria-pressed="true">
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12.4" cy="17.2" r="4.4"/><circle cx="14.6" cy="3.8" r="1.9" fill="currentColor" stroke="none"/><path d="M14.6 6.8v6.6h5.2"/><path d="M14.6 13.4l3.6 6.6"/></svg>
+          <span id="btn-wheel-text">有輪椅或推車</span>
+        </button>
+        <button class="btn danger" id="btn-block" type="button" disabled>
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
+          <span id="btn-block-text">報告此路不通</span>
+        </button>
+        <!-- 速度掣。插入位有計過：.controls 係兩欄格，第六格（第 3 行右邊）
+             本來空住，因為 #btn-reset 有 .full 一定要獨佔一行。所以加呢個掣
+             唔會令面板多一行 —— 仍然係 4 行 350px（見 CLAUDE.md 版面表）。 -->
+        <button class="btn secondary" id="btn-speed" type="button">
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M3 6.2v11.6l8.4-5.8z"/><path d="M12.6 6.2v11.6L21 12z"/></svg>
+          <span id="btn-speed-text">速度 1×</span>
+        </button>
+        <button class="btn secondary full" id="btn-reset" type="button">
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 3v5h5"/></svg>
+          <span id="btn-reset-text">重新開始</span>
+        </button>
+      </div>
+
+      <!-- 圖例：五個形狀同地圖標記一一對應（圓／三角／方／階梯／菱形）。
+           圖示由 facilitySvg() 產生 —— 同地圖標記同一個來源。
+           之前兩邊各寫一份 SVG，任何一邊改咗都會靜靜咁唔一致。 -->
+      <div class="legend" id="legend" aria-label="圖例">
+        <span class="legend-item">
+          <span class="lg-icon" id="lg-ico-lift"></span>
+          <span id="lg-lift">升降機</span>
+        </span>
+        <span class="legend-item">
+          <span class="lg-icon" id="lg-ico-ramp"></span>
+          <span id="lg-ramp">斜道</span>
+        </span>
+        <span class="legend-item">
+          <span class="lg-icon" id="lg-ico-covered"></span>
+          <span id="lg-covered">有蓋通道</span>
+        </span>
+        <span class="legend-item">
+          <span class="lg-icon" id="lg-ico-escalator"></span>
+          <span id="lg-escalator">扶手電梯</span>
+        </span>
+        <span class="legend-item">
+          <span class="lg-icon" id="lg-ico-blocked"></span>
+          <span id="lg-blocked">已報告：此路不通</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- 出處唔需要跟住面板，放出 .dock 外面，令面板本身矮啲 -->
+    <div class="credits" id="credits"></div>
+  </div>
+
+  <!-- 螢幕報讀用：語音內容同步放喺 live region -->
+  <div class="sr-only" role="status" aria-live="polite" id="a11y-status"></div>
+  <div class="sr-only" role="status" aria-live="polite" id="narrator-log"></div>
+</div>
+
+<div id="toast" role="alert"></div>
+
+<!-- 外部資料檔（由 scripts/ 內嘅 Python 生成） -->
+<script src="data/kt_graph.js"></script>
+<script src="data/kt_facilities.js"></script>
+<script src="data/kt_landmarks.js"></script>
+<script src="data/kt_pois.js"></script>
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.12.0/mapbox-gl.js"></script>
+<script>
+/* ============================================================================
+   無障礙出行助手 —— 單一 IIFE
+   12 個段落：1 設定 · 2 狀態 · 3 雙語 · 4 圖與 A* · 5 路線模型
+             6 提示排程 · 7 旁白器 · 8 語音 · 9 地圖 · 10 模擬步行
+             11 介面 · 12 事件與啟動
+   ========================================================================== */
+(function () {
+'use strict';
+
+/* ===== 1. 設定 ========================================================= */
+
+var CONFIG = {
+  // 同 accessibility-assistant-final.html 用同一個公開 token（本身已明文提交）
+  MAPBOX_KEY: 'pk.eyJ1IjoiY2Fsdmlub3ZvIiwiYSI6ImNtdTgwd2thZTAwZmcyenB5MGJzN3N1ZzMifQ.Ut73KdYRum8yTEUYESGH-A',
+  CENTER: [114.1760, 22.3370],
+  ZOOM: 16.2,
+  ELDER_SPEED: 1.0,        // m/s，長者步速
+  WHEEL_SPEED: 0.9,        // m/s，輪椅
+  TICK_MS: 100,
+  STEEP_WARN: 0.083,       // 香港 1:12 無障礙標準
+  /* build_graph.py 會將坡度夾喺 ±0.25。所以一條邊嘅 |slope| 剛好到 0.25，
+     就代表原始坡度爆錶 —— 即係嗰段唔係一條可行走嘅斜路，而係一個垂直
+     連接（實測：路線 A 有一段叫「達之路」嘅邊，水平 15.9 米、Δz 9.3 米，
+     即 58%，冇任何行車路係咁斜）。政府數據冇樓梯屬性，只能靠名（stair／
+     樓梯）捉，冇名嘅樓梯就捉唔到；剩低嘅唯一訊號就係爆錶坡度。
+     所以「最大坡度」呢個指標一定要剔除呢類邊，否則會將一條樓梯報成
+     「25% 斜路」—— 對輪椅使用者嚟講係一個假警報。 */
+  SLOPE_CLAMPED: 0.2499,
+  /* 設施提示只講「真係喺路徑上」嘅設施。實測路線 A 有一條斜道橫向 18 米
+     （即喺條路側邊），但照樣被講成「前面30米有斜道，可以用」—— 用戶行到
+     去望唔到斜道，就係「報錯無障礙設施」。側邊嘅交返俾旁述軌講左右。
+     8 米大約等於一條行人路加一個路口嘅闊度，超過就唔算「喺你條路上」。 */
+  FAC_ON_PATH_D: 8,
+  /* 斜道坡度門檻 —— 掛住「可以用」三個字之前要有根據。
+   *
+   * 未補回 gradient 之前，任何一條斜道都係「前面{m}米有斜道，可以用」，
+   * 而實測走廊內 44 條斜道之中，14 條斜過 1:12、7 條斜過 1:8，最斜一條
+   * 38.42%。對輪椅使用者講一條 38% 嘅斜道「可以用」係直接誤導。
+   *
+   * 1:12（8.33%）＝《設計手冊：暢通無阻的通道》容許輪椅自行上落嘅上限；
+   * 1:8（12.5%）＝放寬後嘅絕對上限（短距離、有扶手）。三檔照呢兩個數分：
+   *   g <= RAMP_OK_G        → 「可以用」
+   *   RAMP_OK_G < g <= 上限 → 講出真實坡度
+   *   g > RAMP_MAX_G        → 講出真實坡度 + 明講輪椅自己上唔到
+   * 呢兩個數同 scripts/build_facilities.py 嘅統計門檻係同一對，改要一齊改。 */
+  RAMP_OK_G: 0.0833,
+  RAMP_MAX_G: 0.125,
+  /* 設施同路線要**同一個高度**先算「喺你條路上」。
+   *
+   * 呢個數據集係三維嘅，但設施配對一直只比對平面距離（x/y）—— 於是
+   * 一條 6.8 米外、低 4.4 米嘅斜道會被講成「前面30米有斜道，可以用」，
+   * 用戶行到去望唔到，就係「報錯無障礙設施」。
+   *
+   * 舊版本喺呢度寫過「分佈係雙峰，2.0–4.3 之間任何門檻都一樣」。**呢個
+   * 講法已經唔成立**：現行示範路線嘅候選集入面，0–4 米之間係有數嘅
+   * （兩條路線都有 0.37／0.60／0.70／1.37／2.80 米）。仍然成立、亦係
+   * 真正要緊嘅係：**個門檻唔係承重數**。跨住門檻最近嘅係 0.37 米
+   * （留住）同 3.90 米（剔走），所以 0.4–3.9 之間任何一個值，
+   * 候選集完全一樣 —— 唔係夾出嚟嘅，係一條闊到唔可能夾錯嘅帶。
+   * 取 2.5 米：細過一層樓，唔會將上一層嘅設施講成喺你條路上。
+   *
+   * 設施點係由行人網絡嘅線段中點抽出嚟，實測每一點都**恰好落喺一個圖
+   * 節點上面**（最近節點距離 0.0 米），所以「設施高度」唔需要新數據，
+   * 圖本身已經有。 */
+  FAC_SAME_LEVEL_M: 2.5,
+  RATE: 0.85,              // 長者語速
+  // 語音同位置嘅協調（見 §10 減速總督同 §12 beginAfterIntro）
+  SPEAK_SLOW: 0.3,         // 講緊嘢時嘅步速倍數
+  SPEAK_SLOW_MIN: 0.25,    // 減速下限（m/s）——唔可以慢到好似停低咗
+  INTRO_WAIT_MAX_MS: 6000, // 開場白最多等幾久就要起步
+  SHORT_ROUTE_M: 500,      // 少於此長度用短開場白（用戶要求按長短調整）
+  /* 行到升降機邊要停幾久（毫秒），模擬入𨋢、等門、升降。
+   *
+   * **唔跟加速倍數縮短。** 語音唔會跟住加速，一縮短就會出現「旁白仲講緊
+   * 升降機，個點已經行遠咗」—— 同轉向、設施一樣，語音同位置唔可以對唔上
+   * （呢個 codebase 三次用戶報告都係呢一種錯）。而且呢幾秒正正係路線 A 嘅
+   * demo 重點：個點真係停低咗，睇得出「搭咗一次𨋢」。
+   * 5 秒亦啱啱好長過旁白（「而家搭升降機，上到 G 層。」≈ 13 個中文字
+   * → 約 3.9 秒，見 speechMs() 嘅 300 ms/字），所以停完嘅時候嗰句一定
+   * 講完，唔會出現半句。 */
+  LIFT_HOLD_MS: 5000,
+  /* 「速度」掣循環嘅倍數。1 倍係常速，2／4 倍係**示範播放**用。
+   *
+   * 點解係加速而唔係拖進度條：旁白係綁住連續嘅 s 去觸發（見 §6 checkTriggers），
+   * 而且減速總督令語音有最終話事權 —— 講緊嘢時個點會自動放慢。加速只係
+   * 改變「兩句之間行幾快」，語音鏈完全唔受影響；拖進度條就會將 s 瞬移，
+   * 被跳過嘅觸發窗唔會補播，跟住就會出現「卡片顯示轉右、語音仲講緊上一個
+   * 路口」—— 即係用戶報過三次嗰種錯。（見 CLAUDE.md §語音同位置） */
+  SPEED_STEPS: [1, 2, 4],
+
+  /* 轉向點同升降機邊相差少於呢個米數，就當係同一件事 —— 個轉向要改講
+     「搭升降機」而唔係「掉頭」。理由見 markLiftManeuvers()。 */
+  LIFT_MARK_M: 12,
+
+  /* 又一城嘅樓層對照 —— z（米）→ 樓層代號。
+   *
+   * **數據本身冇樓層。** 來源 GeoJSON 15 個屬性（aliasName / crossingFeature /
+   * direction / enabled / featureType / gradient / id / obstaclesType /
+   * shapeLength / streetName／weatherProof / wheelchairAccess /
+   * wheelchairBarrier）冇一個係樓層，`data/kt_facilities.js` 七個欄位亦冇。
+   * 所以呢個表係由**三個獨立錨點**推導出嚟，唔係憑記憶砌：
+   *
+   *   · z 19.5 —— 一條行人天橋連接九龍塘站（路線起點節點 z=20.20，相距
+   *     0.7 米），公開資料講明呢個連接係又一城 **LG1** 層。
+   *   · z 24.0 —— 路線頭 90 米沿達之路行，路面 z=23.4；G 層（地面）係
+   *     又一城喺低處嘅街面出入口，0.6 米之差對得上。
+   *   · z 30.8 —— 公開資料：歡天雪地（室內溜冰場）同達之路南面出口都喺
+   *     **UG** 層；呢個 repo 舊文件亦已經把節點 10762（z=30.8）記為
+   *     「歡天雪地嘅樓層」。而路線離開商場行去城大嘅路面正正係 30.8。
+   *   · 四個井口高度 19.5 < 24.0 < 30.8 < 37.5 配 LG1／G／UG／L1 係唯一
+   *     單調排列；加上 13.5 → LG2，五個高度啱啱好對齊公開資料嘅
+   *     LG2／LG1／G／UG／L1，一個唔多一個唔少。
+   *
+   * 只有真係對得上（±MALL_LEVEL_TOL）嘅高度才會講樓層名；其他𨋢一律
+   * 退回「向上／向下」，因為 z 唔係全港通用嘅樓層基準（見 levelName）。 */
+  MALL_LEVELS: [[13.5, 'LG2'], [19.5, 'LG1'], [24.0, 'G'], [30.8, 'UG'], [37.5, 'L1']],
+  MALL_LEVEL_TOL: 1.2
+};
+
+/* z → 樓層代號。對唔上就回空字串（呼叫方要退回「向上／向下」講法）。 */
+function levelName(z) {
+  for (var i = 0; i < CONFIG.MALL_LEVELS.length; i++) {
+    var e = CONFIG.MALL_LEVELS[i];
+    if (Math.abs(z - e[0]) <= CONFIG.MALL_LEVEL_TOL) return e[1];
+  }
+  return '';
+}
+
+// 成本函數權重 —— 同 scripts/verify_routes.py 必須一致
+var COST = {
+  UPHILL_K: 8.0,       // 上斜對輪椅最吃力
+  DOWNHILL_K: 3.0,
+  STEEP_K: 2.5,
+  LIFT_K: 1.0,         // 搭升降機唔按坡度罰
+  RAIN_OPEN: 2.6,      // 露天
+  RAIN_COVERED: 0.7,   // 有蓋
+  FALLBACK: 25.0       // 硬排除後仍然冇路時嘅重罰
+};
+
+var F = { BARRIER: 1, STAIRS: 2, LIFT: 4, COVERED: 8, ESCALATOR: 16, STEEP: 32 };
+var HARD_EXCLUDE = F.STAIRS | F.ESCALATOR | F.BARRIER;
+
+// 兩個預設目的地（維持 2 個）
+//
+// rain：呢個 preset 用唔用雨天權重。
+// 之前 edgeCost() 讀全域 S.rain，但 startRoute() 從來冇由 preset 設定佢 ——
+// 所以 B 線標籤寫住「有蓋通道優先」，實際一直用晴天權重行：
+// 有蓋比例 3.2%、有蓋提示 0 次（開雨天模式之後係 10.8%、2 次）。
+// 標籤同行為唔一致，係真 bug。
+//
+// B 而家係**晴雨對照路線**（見 POIS.salvation）：preset 嘅 rain 旗標一定要
+// 有人撐住，兩個 preset 都係 false 嘅話 `if (!S.weatherManual) setRain(…)`
+// 嗰行就冇任何可見效果，遲早被人當死碼刪走。A 攞住晴天、B 攞住雨天，
+// 「撳邊個掣就用邊個天氣」係可以喺螢幕上睇到嘅行為。
+var PRESETS = {
+  /* via = 路線一定要「搭一次」嘅升降機邊（用戶要求：路線一讓模擬點搭一次
+   * 又一城嘅升降機）。
+   *
+   * 點解要喺規劃層夾硬嚟：圖入面有 29 條升降機邊、總長 9.7 米，成本函數對
+   * 佢哋幾乎無感；而 733 條「隱形垂直」邊會假裝平路，直接行過去就上到樓。
+   * 實測任何 LIFT_K、任何 0–40% 順路加分都唔會令路線 A 自己揀升降機。
+   * 所以「一定要搭」只可以咁做：起點→升降機下層、升降機上層→終點，兩段
+   * 獨立 A*，再將升降機邊本身縫返中間（同 B′「用升降機節點做終點」係同一招）。
+   *
+   * lo／hi 係**節點編號**而唔係座標：兩個落腳點嘅距離係 0.11 米，用座標
+   * 根本分唔開上下層（節點身分就係 2D 座標取 6 個小數位）。
+   * planVia() 每次都會驗證 lo→hi 之間真係一條 LIFT 邊，唔係就靜靜咁退回
+   * 普通 A* —— 數據一改就唔會出現「假升降機」。
+   *
+   * 代價（實測，見 scripts/verify_routes.py）：639 → 697 米（+58.5 米，
+   * +9.2%），有蓋 51% → 55%，最斜 23.4% 不變，樓梯／扶手電梯仍然 0。 */
+  A: { key: 'A', to: 'cityu', nameKey: 'routeA', subKey: 'routeASub', rain: false,
+       via: { lo: 12351, hi: 10763 } },
+  B: { key: 'B', to: 'salvation', nameKey: 'routeB', subKey: 'routeBSub', rain: true }
+};
+
+var ORIGIN = 'mtr';
+var POIS = {
+  mtr:    { lng: 114.1760, lat: 22.3370 },
+  cityu:  { lng: 114.1715, lat: 22.3376 },
+  /* B 線終點：救世軍大坑東隊。座標由 data/kt_pois.js 抄出嚟
+     （nameTC「救世軍大坑東隊」，tcOk: true），**唔係手打** ——
+     呢個 App 嘅使用者係輪椅人士，手打錯一個小數位就會令佢行錯路。
+     名字亦跟數據檔，令到達語音、地圖同 popup 講同一個名。
+     晴雨對照就係呢條線嘅賣點（晴天 642 米／38% 有蓋／冇升降機，
+     落雨 653 米／62% 有蓋／搭一次升降機），詳細數字見 verify_routes.py。 */
+  salvation: { lng: 114.172615, lat: 22.334458 },
+  /* 上一版 B 線嘅終點：又一城商場上層（z 30.8，即歡天雪地嗰層），10.6 米
+   * 高過街。而家冇 preset 用佢，但**唔好刪** —— 佢係「終點可以係一個升降機
+   * 節點而唔係 POI」呢個技巧嘅唯一實例，scripts/verify_routes.py 仍然有
+   * 佢嘅回歸行，CLAUDE.md 亦記住佢嘅 6 厘米邊際同 inadmissible heuristic。
+   *
+   * 呢個座標**唔係一個 POI 嘅座標**，係一條升降機節點嘅座標。要講清楚：
+   * 全個圖入面，由九龍塘站出發冇一個有名地方嘅路線係搭升降機嘅 —— 289 個
+   * 有名目的地，搭升降機嘅數目係 0。政府 3D 行人網絡有 733 條邊係**真垂直
+   * 連接**（|Δz| ≥ 1.5 米、坡度 > 25%）但冇 LIFT 旗標，坡度值又係 0.000，
+   * 所以 router 當佢哋係平路，直接行過去，繞過 29 條真升降機邊。
+   * 要條路線真係搭升降機，只有喺終點度買。 */
+  mallUp: { lng: 114.17455, lat: 22.33742 }
+};
+
+/* ===== 2. 狀態 ========================================================= */
+
+var S = {
+  lang: 'zh-HK',
+  rain: false,
+  /* 用戶有冇帶輪椅／推車之類嘅大型物件。true = 有。
+     影響嘅係**提示內容**，唔係路線：扶手電梯輪椅用唔到，所以輪椅模式
+     之下標記劃斜線、語音唔講。實測改路線冇用（見 setWheel 註釋）。 */
+  wheel: true,
+  weatherManual: false, // 用戶自己撳過天氣掣 → preset 同自動偵測都唔再覆寫
+  weatherSource: '',    // '' | 'auto' | 'manual'，用嚟講清楚天氣狀態點嚟
+  /* 播放速度倍數（1／2／4，見 CONFIG.SPEED_STEPS）。
+     淨係影響「兩句旁白之間行幾快」：narration 係減速總督（見 §10 _tick），
+     講緊嘢嗰陣倍數會被忽略，所以語音永遠跟得上，唔會出現追唔到嘅情況。 */
+  speedMul: 1,
+  routeKey: null,
+  route: null,          // 見 §5 buildRoute()
+  walk: null,           // 見 §10
+  blocked: [],          // 使用者報告「此路不通」嘅邊（餵俾 astar）
+  reports: [],          // 使用者報告嘅位置（連座標，用嚟落標記同列清單）
+  lastSpoken: ''        // 供「再講一次」
+};
+
+var MAP = null, mapReady = false;
+
+/* ===== 3. 雙語 ========================================================= */
+
+var I18N = {
+  'zh-HK': {
+    appTitle: '無障礙出行助手',
+    routeA: '輪椅路線 · 香港城市大學',
+    routeASub: '避樓梯 · 平路優先',
+    routeB: '晴雨路線 · 大坑東',
+    routeBSub: '晴天露天 · 落雨多蓋',
+    // 目的地「淨名」—— 用於語音。
+    // 唔可以攞 routeA 嚟讀：routeA 係介面標籤（「輪椅路線 · 香港城市大學」），
+    // 讀出嚟會變成「你已經到達輪椅路線 · 香港城市大學」。
+    destA: '香港城市大學',
+    /* 講全名而唔係「大坑東」：大坑東係一個區，區內有邨、有遊樂場、
+       有呢個部隊，到達句講「大坑東」用戶唔知自己到咗邊。全名亦同
+       data/kt_pois.js 嘅 nameTC 一致。 */
+    destB: '救世軍大坑東隊',
+    pickDest: '揀目的地',
+    readyStart: '準備開始',
+    pickRoute: '請先揀一條路線',
+    distance: '距離', time: '時間',
+    stairs: '樓梯', slope: '最大坡度',
+    cover: '有蓋路段', lift: '升降機',
+    qualityTitle: '路線質素',
+    minutes: '分鐘', meters: '米',
+    start: '開始', pause: '暫停', resume: '繼續',
+    repeat: '再講一次', sunny: '晴天', rainy: '雨天',
+    blocked: '報告此路不通', reset: '重新開始',
+    /* 速度掣：顯示「速度 1×」。淨係寫「1×」對長者用戶唔清楚，
+       但「播放速度」四個字又太長（掣得 281px 闊），所以前綴取「速度」。 */
+    speed: '速度',
+    speedAria: '播放速度，而家 {n} 倍。撳一下轉下一個倍數。',
+    lgLift: '升降機', lgRamp: '斜道', lgCovered: '有蓋通道',
+    lgEscalator: '扶手電梯',
+    /* 標籤寫短啲係為咗好讀，唔係為咗慳位 —— 實測過，圖例喺 .wrap（600px）
+       入面本來就已經係兩行（四項加起上嚟 841px ＋ 4 個 20px 間隙 = 921px，
+       可用闊度只有 572px），加咗第五項都仲係兩行。所以短標籤慳唔到位，
+       只不過對低視力用戶嚟講「扶手電梯 輪椅唔適用」好讀過
+       「扶手電梯 （輪椅唔適用）」，而且斜線本身已經表達咗「唔適用」。 */
+    lgEscOff: '輪椅唔適用', lgEscOn: '可以用',
+    lgBlocked: '已報告：此路不通',
+    // 輪椅／推車模式（影響圖標、語言、質素卡；唔改路線）
+    whOn: '有輪椅或推車', whOff: '冇輪椅或推車',
+    whOnAria: '有輪椅或推車 · 扶手電梯唔適用',
+    whOffAria: '冇輪椅或推車 · 可以用扶手電梯',
+    qModeWheel: '輪椅／推車模式：扶手電梯唔適用。',
+    qModePlain: '冇輪椅／推車：扶手電梯可以用。',
+    legLift: '升降機', legRamp: '斜道', legCovered: '有蓋通道',
+    arrive: '到達目的地',
+    arriveSub: '你已經到達',
+    straight: '繼續直行',
+    turnLeft: '轉左', turnRight: '轉右',
+    slightLeft: '稍為偏左', slightRight: '稍為偏右',
+    uTurn: '請掉頭',
+    liftWord: '搭升降機',
+    thenTurn: '然後',
+    inMeters: '米後',
+    // 播報 —— 語氣：溫柔、有耐性、好似有人陪住行。
+    // 轉向資訊一句都唔減，只改講法（用戶明確要求唔可以刪轉向提示）。
+    nTurnSoon: '前面{m}米要{dir}喇，慢慢準備定。',
+    nTurnSoonNear: '就快到路口喇，{m}米之後{dir}。',
+    nTurnNow: '而家{dir}，唔使急。',
+    nFacility: '前面{m}米有{facility}，可以用。',
+    nFacilityHere: '呢度有{facility}，可以用。',
+    nFacilityCovered: '前面{m}米入有蓋通道，唔會淋雨。',
+    nRampSteep: '前面{m}米有斜道，坡度大約{p}%，比標準斜，要慢慢嚟。',
+    nRampSteepHere: '呢度有斜道，坡度大約{p}%，比標準斜，要慢慢嚟。',
+    nRampTooSteep: '前面{m}米有斜道，坡度大約{p}%，好斜，輪椅自己上唔到。',
+    nRampTooSteepHere: '呢度有斜道，坡度大約{p}%，好斜，輪椅自己上唔到。',
+    nLandmarkL: '左手邊係{name}，你行啱路喇。',
+    nLandmarkR: '右手邊係{name}，你行啱路喇。',
+    nLandmarkAhead: '前面就係{name}，你行啱路喇。',
+    nCueL: '左手邊係{name}，有{facility}。',
+    nCueR: '右手邊係{name}，有{facility}。',
+    nCueAhead: '前面{name}有{facility}。',
+    nStart: '我哋開始喇，全程大概{d}米，約{t}分鐘。慢慢嚟，唔使急。',
+    nStartShort: '我哋開始喇，大概{d}米，好快就到。慢慢嚟。',
+    nArrive: '到喇，呢度就係{destination}。辛苦晒你。',
+    nReport: '好，我記低咗呢度唔通，而家幫你避開佢。',
+    /* 搭升降機。有樓層名就講樓層（只有又一城對得上 CONFIG.MALL_LEVELS），
+       對唔上就只講方向 —— 報錯層數比唔報更差，所以樓層名一定要查得到先講。 */
+    nLiftUp: '而家搭升降機，向上。',
+    nLiftDown: '而家搭升降機，向下。',
+    liftUpWord: '上', liftDownWord: '落',
+    nLiftSoon: '前面{m}米要搭升降機喇，慢慢準備定。',
+    nLiftSoonNear: '就快到升降機喇，{m}米之後搭升降機。',
+    nLiftSoonNearLevel: '就快到升降機喇，{m}米之後搭升降機{uw} {level} 層。',
+    nLiftNowLevel: '而家搭升降機，{uw}到 {level} 層。',
+    nRepeatNone: '暫時未有提示',
+    // 警告
+    wSteep: '路線最斜一段約 {p}%，佔好短距離。',
+    wStairs: '注意：此路線包含樓梯，可能唔適合輪椅',
+    wNoLift: '此段冇升降機記錄',
+    wOpenAir: '提提你：呢條路有 {m} 米係露天嘅，記得帶傘。',
+    // 對照
+    cmp: '對照：最短路線 {len}米',
+    /* {n} 係 stairs + escalator 兩者之和（見 renderQuality），所以一定要
+       兩樣都講。B 線嘅對照卡正正係「避開 1 段扶手電梯」而唔係樓梯 ——
+       寫「樓梯」會令展示嗰句中斷言一件數據上唔存在嘅事。 */
+    cmpOk: '已為你避開 {n} 段樓梯或扶手電梯',
+    // 狀態
+    noVoice: '此裝置未支援廣東話語音，會用最接近嘅語音代替',
+    blockedDone: '已記錄呢度唔通，並重新規劃咗路線',
+    noRoute: '搵唔到無障礙路線，請稍後再試',
+    wxAuto: '自動偵測', wxManual: '你手動設定',
+    // 報告清單
+    reportTitle: '已報告 {n} 處唔通',
+    reportItem: '{m} 米處 · {time}',
+    // 設施（通用名，因為好多設施冇專名）
+    fLift: '升降機', fRamp: '斜道', fCovered: '有蓋通道',
+    fEscalator: '扶手電梯',
+    escWarn: '輪椅用唔到',
+    rampSteepLabel: '坡度約 {p}%，比標準斜',
+    rampTooSteepLabel: '坡度約 {p}%，輪椅自己上唔到',
+    dataFail: '資料載入失敗，請用 http://localhost 開啟（唔可以用 file://）'
+  },
+  'en': {
+    appTitle: 'Accessibility Travel Assistant',
+    routeA: 'Wheelchair route · City University',
+    routeASub: 'No stairs · gentlest slope',
+    routeB: 'Weather route · Tai Hang Tung',
+    routeBSub: 'Open in the dry · more cover in rain',
+    destA: 'City University of Hong Kong',
+    destB: 'The Salvation Army, Tai Hang Tung',
+    pickDest: 'Choose destination',
+    readyStart: 'Ready',
+    pickRoute: 'Pick a route to begin',
+    distance: 'Distance', time: 'Time',
+    stairs: 'Stairs', slope: 'Max slope',
+    cover: 'Covered', lift: 'Lifts',
+    qualityTitle: 'Route quality',
+    minutes: 'min', meters: 'm',
+    start: 'Start', pause: 'Pause', resume: 'Resume',
+    repeat: 'Repeat', sunny: 'Sunny', rainy: 'Rainy',
+    blocked: 'Report blocked', reset: 'Restart',
+    speed: 'Speed',
+    speedAria: 'Playback speed, currently {n} times. Press to change.',
+    lgLift: 'Lift', lgRamp: 'Ramp', lgCovered: 'Covered walkway',
+    lgEscalator: 'Escalator',
+    lgEscOff: 'not for wheelchairs', lgEscOn: 'usable',
+    lgBlocked: 'Blocked (reported)',
+    whOn: 'Wheelchair', whOff: 'No wheelchair',
+    whOnAria: 'Has wheelchair or trolley · escalators not usable',
+    whOffAria: 'No wheelchair or trolley · escalators usable',
+    qModeWheel: 'Wheelchair/trolley: escalators not usable.',
+    qModePlain: 'No wheelchair/trolley: escalators usable.',
+    legLift: 'lift', legRamp: 'ramp', legCovered: 'covered walkway',
+    arrive: 'Arrive at destination',
+    arriveSub: 'You have arrived',
+    straight: 'Continue straight',
+    turnLeft: 'Turn left', turnRight: 'Turn right',
+    slightLeft: 'Bear left', slightRight: 'Bear right',
+    uTurn: 'Turn around',
+    liftWord: 'Take the lift',
+    thenTurn: 'then',
+    inMeters: 'm',
+    // Narration — same warm, patient register as the Cantonese side.
+    // No turn instruction is shortened; only the wording changes.
+    nTurnSoon: 'In {m} metres we need to {dir} — take your time.',
+    nTurnSoonNear: 'Almost at the junction — {m} metres and then {dir}.',
+    nTurnNow: 'Now {dir}, nice and easy.',
+    nFacility: 'There is a {facility} in {m} metres, you can use it.',
+    nFacilityHere: 'There is a {facility} right here — you can use it.',
+    nFacilityCovered: 'Covered walkway in {m} metres — you will stay dry.',
+    nRampSteep: 'Ramp in {m} metres, about {p}% — steeper than the standard. Take it slowly.',
+    nRampSteepHere: 'Ramp here, about {p}% — steeper than the standard. Take it slowly.',
+    nRampTooSteep: 'Ramp in {m} metres, about {p}% — very steep. A wheelchair cannot climb this unaided.',
+    nRampTooSteepHere: 'Ramp here, about {p}% — very steep. A wheelchair cannot climb this unaided.',
+    nLandmarkL: '{name} is on your left — you are on the right track.',
+    nLandmarkR: '{name} is on your right — you are on the right track.',
+    nLandmarkAhead: '{name} is just ahead — you are on the right track.',
+    nCueL: '{name} is on your left, with a {facility}.',
+    nCueR: '{name} is on your right, with a {facility}.',
+    nCueAhead: 'There is a {facility} at {name} ahead.',
+    nStart: 'Let us start. About {d} metres, roughly {t} minutes. No rush at all.',
+    nStartShort: 'Let us start. About {d} metres — not far. Take your time.',
+    nArrive: 'Here we are — {destination}. Well done.',
+    nReport: 'Noted — I have recorded that this is blocked and I am routing you around it.',
+    nLiftUp: 'We are taking the lift up now.',
+    nLiftDown: 'We are taking the lift down now.',
+    liftUpWord: 'up', liftDownWord: 'down',
+    nLiftSoon: 'We take the lift in {m} metres — get ready.',
+    nLiftSoonNear: 'Almost at the lift — we take it in {m} metres.',
+    nLiftSoonNearLevel: 'Almost at the lift — we take it {uw} to level {level} in {m} metres.',
+    nLiftNowLevel: 'We are taking the lift {uw} to level {level} now.',
+    nRepeatNone: 'No instruction yet',
+    wSteep: 'The steepest stretch is about {p}%, over a short distance.',
+    wStairs: 'Caution: this route includes stairs and may not suit a wheelchair',
+    wNoLift: 'No lift recorded on this section',
+    wOpenAir: 'A heads-up: {m} metres of this route are out in the open. Bring an umbrella.',
+    cmp: 'Compare: shortest route {len}m',
+    cmpOk: 'Avoided {n} stairs or escalators for you',
+    noVoice: 'Cantonese voice unavailable on this device; using the closest voice',
+    blockedDone: 'Blockage recorded and the route recalculated',
+    noRoute: 'No accessible route found, please try again',
+    wxAuto: 'auto-detected', wxManual: 'set by you',
+    reportTitle: '{n} blockage(s) reported',
+    reportItem: 'at {m} m · {time}',
+    fLift: 'lift', fRamp: 'ramp', fCovered: 'covered walkway',
+    fEscalator: 'escalator',
+    escWarn: 'not usable by wheelchair',
+    rampSteepLabel: 'about {p}% — steeper than the standard',
+    rampTooSteepLabel: 'about {p}% — a wheelchair cannot climb it unaided',
+    dataFail: 'Data failed to load. Serve over http://localhost, not file://'
+  }
+};
+
+function t(key) {
+  var tbl = I18N[S.lang] || I18N['zh-HK'];
+  return (key in tbl) ? tbl[key] : (I18N['zh-HK'][key] || key);
+}
+function fmt(str, vars) {
+  return String(str).replace(/\{(\w+)\}/g, function (m, k) {
+    return (vars && k in vars) ? vars[k] : m;
+  });
+}
+
+/* ===== 4. 圖與 A* ====================================================== */
+
+var GRAPH = null;      // {nodes, edges, names, meta}
+var ADJ = null;        // node -> [edgeIdx]
+
+function metersBetween(lng1, lat1, lng2, lat2) {
+  var dx = (lng2 - lng1) * 111320 * Math.cos(lat1 * Math.PI / 180);
+  var dy = (lat2 - lat1) * 111320;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/* 資料檔喺 data/*.js 用頂層 `const` 宣告。
+ *
+ * 陷阱：頂層 const 只會建立「全域語彙綁定」，**唔會**成為 window 嘅屬性。
+ * 所以 window.KT_GRAPH 喺任何情況下都係 undefined —— http://localhost
+ * 一樣、file:// 一樣。呢個同跨來源完全冇關係。
+ * 只有裸識別碼（KT_GRAPH）睇得到，所以一定要用 typeof 讀：
+ * typeof 對未宣告嘅名唔會拋錯，資料檔缺失時回 null，app 唔會死。
+ */
+function dataOrNull(name) {
+  /* 一定要逐個名寫死。唔可以用 eval 砌字串：CSP 一禁 eval 就回 null，
+     會誤報「資料載入失敗」，而且審查見到 eval 一定問。
+     try/catch 係為咗萬一資料檔載入到一半拋錯，const 會留喺 TDZ，
+     嗰陣連 typeof 都會拋 ReferenceError —— 應該當冇資料，唔係死喺度。 */
+  try {
+    if (name === 'KT_GRAPH')      return typeof KT_GRAPH      !== 'undefined' ? KT_GRAPH      : null;
+    if (name === 'KT_FACILITIES') return typeof KT_FACILITIES !== 'undefined' ? KT_FACILITIES : null;
+    if (name === 'KT_LANDMARKS')  return typeof KT_LANDMARKS  !== 'undefined' ? KT_LANDMARKS  : null;
+    if (name === 'KT_POIS')       return typeof KT_POIS       !== 'undefined' ? KT_POIS       : null;
+  } catch (e) { return null; }
+  return null;
+}
+
+function initGraph() {
+  GRAPH = dataOrNull('KT_GRAPH');
+  if (!GRAPH || !GRAPH.nodes || !GRAPH.edges) return false;
+  ADJ = {};
+  for (var i = 0; i < GRAPH.edges.length; i++) {
+    var e = GRAPH.edges[i];
+    (ADJ[e[0]] = ADJ[e[0]] || []).push(i);
+    (ADJ[e[1]] = ADJ[e[1]] || []).push(i);
+  }
+  return true;
+}
+
+function nearestNode(lng, lat) {
+  var best = -1, bd = Infinity;
+  for (var i = 0; i < GRAPH.nodes.length; i++) {
+    var n = GRAPH.nodes[i];
+    var d = metersBetween(lng, lat, n[0], n[1]);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return { idx: best, dist: bd };
+}
+
+/* 邊成本 —— 同 scripts/verify_routes.py 一致。
+   penaltyOnly=true 時，原本硬排除嘅邊改成重罰（冇路時嘅退路）。 */
+function edgeCost(e, penaltyOnly) {
+  var len = e[2], slope = e[3], flags = e[4];
+
+  if (flags & HARD_EXCLUDE) {
+    if (!penaltyOnly) return Infinity;
+  }
+  var f;
+  if (flags & F.LIFT) {
+    f = COST.LIFT_K;                    // 升降機唔按坡度計算
+  } else {
+    if (slope > 0.005) f = 1 + COST.UPHILL_K * slope;
+    else if (slope < -0.005) f = 1 + COST.DOWNHILL_K * Math.abs(slope);
+    else f = 1;
+    if (flags & F.STEEP) f *= COST.STEEP_K;
+  }
+  if (S.rain) f *= (flags & F.COVERED) ? COST.RAIN_COVERED : COST.RAIN_OPEN;
+  if (penaltyOnly && (flags & HARD_EXCLUDE)) f *= COST.FALLBACK;
+  return len * f;
+}
+
+function isBlockedNodePair(a, b) {
+  for (var i = 0; i < S.blocked.length; i++) {
+    var bl = S.blocked[i];
+    if ((bl[0] === a && bl[1] === b) || (bl[0] === b && bl[1] === a)) return true;
+  }
+  return false;
+}
+
+/* 二元堆 */
+function Heap() { this.a = []; }
+Heap.prototype.push = function (p, v) {
+  var a = this.a; a.push([p, v]);
+  var i = a.length - 1;
+  while (i > 0) {
+    var par = (i - 1) >> 1;
+    if (a[par][0] <= a[i][0]) break;
+    var tmp = a[par]; a[par] = a[i]; a[i] = tmp; i = par;
+  }
+};
+Heap.prototype.pop = function () {
+  var a = this.a;
+  if (!a.length) return null;
+  var top = a[0], last = a.pop();
+  if (a.length) {
+    a[0] = last;
+    var i = 0;
+    for (;;) {
+      var l = 2 * i + 1, r = l + 1, m = i;
+      if (l < a.length && a[l][0] < a[m][0]) m = l;
+      if (r < a.length && a[r][0] < a[m][0]) m = r;
+      if (m === i) break;
+      var tmp = a[m]; a[m] = a[i]; a[i] = tmp; i = m;
+    }
+  }
+  return top;
+};
+Heap.prototype.empty = function () { return this.a.length === 0; };
+
+/* shortest=true → 純距離（對照用）；penaltyOnly=true → 放寬硬排除 */
+function astar(start, goal, shortest, penaltyOnly) {
+  var N = GRAPH.nodes;
+  function h(i) {
+    return metersBetween(N[i][0], N[i][1], N[goal][0], N[goal][1]);
+  }
+  var g = {}, came = {}, closed = {};
+  var pq = new Heap();
+  g[start] = 0;
+  pq.push(h(start), start);
+
+  while (!pq.empty()) {
+    var top = pq.pop();
+    var cur = top[1];
+    if (cur === goal) break;
+    if (closed[cur]) continue;
+    closed[cur] = 1;
+
+    var list = ADJ[cur] || [];
+    for (var k = 0; k < list.length; k++) {
+      var ei = list[k], e = GRAPH.edges[ei];
+      var nxt = (e[0] === cur) ? e[1] : e[0];
+      if (isBlockedNodePair(cur, nxt)) continue;
+
+      var cost = shortest ? e[2] : edgeCost(e, penaltyOnly);
+      if (!isFinite(cost)) continue;
+
+      var ng = g[cur] + cost;
+      if (!(nxt in g) || ng < g[nxt]) {
+        g[nxt] = ng; came[nxt] = cur;
+        pq.push(ng + h(nxt), nxt);
+      }
+    }
+  }
+  if (!(goal in g)) return null;
+
+  var path = [goal], c = goal;
+  while (c !== start) { c = came[c]; if (c === undefined) return null; path.push(c); }
+  return path.reverse();
+}
+
+/* ===== 5. 路線模型 ===================================================== */
+
+function edgeBetween(a, b) {
+  var list = ADJ[a] || [];
+  for (var i = 0; i < list.length; i++) {
+    var e = GRAPH.edges[list[i]];
+    if ((e[0] === a && e[1] === b) || (e[0] === b && e[1] === a)) return list[i];
+  }
+  return -1;
+}
+
+function bearing(lng1, lat1, lng2, lat2) {
+  var dx = (lng2 - lng1) * Math.cos(lat1 * Math.PI / 180);
+  var dy = (lat2 - lat1);
+  return Math.atan2(dx, dy) * 180 / Math.PI;   // 由北順時針
+}
+
+function normDeg(d) {
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+
+function buildRoute(path, label) {
+  var nodes = GRAPH.nodes, edges = GRAPH.edges;
+  var pts = [], cum = [0], i, zs = [];
+
+  for (i = 0; i < path.length; i++) {
+    pts.push([nodes[path[i]][0], nodes[path[i]][1]]);
+    zs.push(nodes[path[i]][2]);   // 設施配對要對高度（見 CONFIG.FAC_SAME_LEVEL_M）
+  }
+
+  var stats = {
+    length: 0, stairs: 0, escalator: 0, lift: 0,
+    coveredLen: 0, steepLen: 0, maxUp: 0, maxDown: 0
+  };
+  var edgeFlags = [], edgeLens = [];
+  /* 路線會經過嘅升降機邊（s = 邊嘅起點）。行到呢度要停幾秒模擬搭𨋢，
+     並且報一句「而家搭升降機」（見 §10 _tick 同 CONFIG.LIFT_HOLD_MS）。
+     呢個係**通用**機制：唔理係邊條路線、邊部𨋢，只要有 LIFT 旗標就停。 */
+  var lifts = [];
+
+  for (i = 0; i < path.length - 1; i++) {
+    var ei = edgeBetween(path[i], path[i + 1]);
+    var e = (ei >= 0) ? edges[ei] : [0, 0, 0, 0, 0, 0];
+    edgeFlags.push(e[4]); edgeLens.push(e[2]);
+    stats.length += e[2];
+    if (e[4] & F.STAIRS) stats.stairs++;
+    if (e[4] & F.ESCALATOR) stats.escalator++;
+    if (e[4] & F.LIFT) {
+      stats.lift++;
+      /* 方向由 Δz 嘅正負決定；樓層名唔喺數據度，係由 z 推導（見 CONFIG.MALL_LEVELS
+         同 levelName()）—— 推唔到就照講「向上／向下」，唔會砌一個假樓層。
+         zA / zB 兩邊都記低，因為落𨋢同入𨋢要講唔同嗰層。
+         `done` 係「呢部𨋢已經處理過」，唔可以每次 tick 都再停一次。 */
+      lifts.push({ s: cum[i], dz: nodes[path[i + 1]][2] - nodes[path[i]][2],
+                   zA: nodes[path[i]][2], zB: nodes[path[i + 1]][2],
+                   ei: ei, done: false });
+    }
+    if (e[4] & F.COVERED) stats.coveredLen += e[2];
+    if (e[4] & F.STEEP) stats.steepLen += e[2];
+    // 夾到上限嘅邊係垂直連接，唔係斜路 —— 唔可以計入「最大坡度」（見 CONFIG.SLOPE_CLAMPED）
+    if (e[3] > 0.005 && e[3] < CONFIG.SLOPE_CLAMPED) stats.maxUp = Math.max(stats.maxUp, e[3]);
+    else if (e[3] < -0.005 && e[3] > -CONFIG.SLOPE_CLAMPED) stats.maxDown = Math.max(stats.maxDown, -e[3]);
+    cum.push(cum[i] + e[2]);
+  }
+  stats.coveredPct = stats.length > 0 ? 100 * stats.coveredLen / stats.length : 0;
+
+  var maneuvers = extractManeuvers(pts, cum);
+
+  // 沿線設施（垂直距離 < 22m）
+  var rawFac = nearbyFacilities(pts, cum, zs, path, 22);
+  var facilities = rawFac.map(function (f) {
+    return { s: f.s, d: f.d, type: f.type, idx: f.idx, announced: false };
+  });
+
+  /* 升降機井喺 2D 上面係一個點 → 穿過井嘅路線一定會「行返轉頭」，
+     extractManeuvers 就會抽出一個掉頭。實測路線 A 嗰個 153° 掉頭（s=211.1）
+     就係夾出嚟嘅升降機邊（#13502，19.5 → 24.0 米），用戶報「語音同文字都話
+     準備調頭，但其實係搭升降機」。呢一步將呢種掉頭改寫成 'lift'。 */
+  markLiftManeuvers(maneuvers, lifts);
+
+  /* 呢部𨋢由轉向軌（而家係「搭升降機」）由 60 米、20 米講到埋身，
+     設施軌唔可以再講一次 —— 否則 41 米之內會出現四句「升降機」
+     （實測：s=170 轉向軌、s=181 設施軌、s=191 轉向軌、s=211 埋身）。
+     只剔走**路線真係搭嘅**嗰部；隔籬嘅𨋢照樣由設施軌講。 */
+  for (i = 0; i < facilities.length; i++) {
+    for (var lj = 0; lj < lifts.length; lj++) {
+      if (lifts[lj].marked && Math.abs(facilities[i].s - lifts[lj].s) <= CONFIG.LIFT_MARK_M) {
+        facilities[i].liftRidden = true;
+        break;
+      }
+    }
+  }
+
+  // 升降機／斜道旁述：8–40 米，按索引同上面去重（唔可以同一設施講兩次）
+  var cues = selectCues(pts, cum, zs, path, rawFac);
+
+  // 沿線地標（政府 + OSM），做辨路提示
+  var landmarks = selectLandmarks(pts, cum, maneuvers);
+
+  return {
+    label: label, path: path, pts: pts, cum: cum, zs: zs,
+    edgeFlags: edgeFlags, edgeLens: edgeLens,
+    stats: stats, maneuvers: maneuvers, lifts: lifts,
+    facilities: facilities, cues: cues, landmarks: landmarks,
+    total: stats.length,
+    _coveredSaid: 0        // 有蓋通道最多播兩次（見 §6）
+  };
+}
+
+/* 轉向抽取 —— 呢個係「轉向要準」嘅關鍵。
+ *
+ * 唔可以就咁用相鄰兩段嘅方位角：實測校園內部有大量 1–7 米嘅碎段，
+ * 喺咁短嘅基線上算方位角，少少幾何誤差就會令角度大幅擺動，
+ * 結果係憑空製造出大量假轉向（實測會產生 17 個「轉向」＝ 66 句語音，
+ * 對於 639 米嘅路程嚟講係不停講嘢）。
+ *
+ * 做法：先將路線重採樣成固定 4 米間距，再用 ±12 米嘅基線計夾角。
+ * 咁樣短碎段嘅噪音會被平滑掉，剩返真正嘅路口轉向。
+ */
+var RS_STEP = 4;        // 重採樣間距（米）
+var RS_BASE = 3;        // 基線 = 3 步 ≈ 12 米
+var TURN_MIN = 30;      // 夾角門檻（度）
+var MERGE_WITHIN = 22;  // 相距少於此值嘅轉向合併為一個
+
+function resample(pts, cum) {
+  var out = [], i, j;
+  for (i = 0; i < pts.length - 1; i++) {
+    var segLen = cum[i + 1] - cum[i];
+    var steps = Math.max(1, Math.round(segLen / RS_STEP));
+    for (j = 0; j < steps; j++) {
+      var u = j / steps;
+      out.push({
+        lng: pts[i][0] + u * (pts[i + 1][0] - pts[i][0]),
+        lat: pts[i][1] + u * (pts[i + 1][1] - pts[i][1]),
+        s: cum[i] + u * segLen
+      });
+    }
+  }
+  var last = pts.length - 1;
+  out.push({ lng: pts[last][0], lat: pts[last][1], s: cum[last] });
+  return out;
+}
+
+function extractManeuvers(pts, cum) {
+  var rs = resample(pts, cum);
+  var raw = [], k, i;
+
+  for (i = RS_BASE; i < rs.length - RS_BASE; i++) {
+    var a = rs[i - RS_BASE], b = rs[i], c = rs[i + RS_BASE];
+    if (b.s - a.s < 4 || c.s - b.s < 4) continue;
+    var bIn = bearing(a.lng, a.lat, b.lng, b.lat);
+    var bOut = bearing(b.lng, b.lat, c.lng, c.lat);
+    var turn = normDeg(bOut - bIn);
+    if (Math.abs(turn) < TURN_MIN) continue;
+    raw.push({ s: b.s, angle: turn });
+  }
+
+  // 合併鄰近轉向：同一個路口唔應該講兩次
+  raw.sort(function (x, y) { return x.s - y.s; });
+  var merged = [];
+  for (k = 0; k < raw.length; k++) {
+    var cur = raw[k];
+    if (merged.length && (cur.s - merged[merged.length - 1].s) < MERGE_WITHIN) {
+      var prev = merged[merged.length - 1];
+      // 保留**角度較大**嘅一個，唔可以相加。
+      // 相加會令兩個連續 80° 轉彎變成 160°，被誤判成「掉頭」——
+      // 實測起點就出現咗一次假掉頭提示。
+      if (Math.abs(cur.angle) > Math.abs(prev.angle)) {
+        prev.angle = cur.angle;
+        prev.s = cur.s;
+      }
+      continue;
+    }
+    merged.push({ s: cur.s, angle: cur.angle });
+  }
+
+  return merged.map(function (m) {
+    var a = m.angle;
+    return {
+      s: m.s, angle: a,
+      dir: Math.abs(a) > 150 ? 'uturn'
+         : (Math.abs(a) > 55 ? (a > 0 ? 'right' : 'left')
+         : (a > 0 ? 'slight-right' : 'slight-left')),
+      done: {}
+    };
+  });
+}
+
+/* 掉頭轉向如果係喺升降機邊度，就唔係真掉頭 —— 改做 'lift'。
+ *
+ * 原因係幾何：一個升降機井喺 2D 地圖上面係**一個點**。實測又一城嗰條井
+ * z = 19.5 → 24.0 → 30.8 → 37.5 四個高度共用同一組座標，所以任何穿過井嘅
+ * 路線畫出嚟都一定係「入到一個點再返轉頭出」，量到嘅夾角就係 153°。
+ * 呢個唔係 splice 造成嘅假象（兩條腿喺 2D 上真係咁行），但佢亦唔係一個
+ * 用戶做得到嘅動作 —— 用戶喺𨋢裡面，唔係掉頭。所以卡片同語音都應該講
+ * 「搭升降機」，唔係「請掉頭」。
+ *
+ * **只改掉頭**。真係轉左／轉右照樣講返個轉向 —— 唔可以因為隔籬有部𨋢
+ * 而食咗一個用戶真係要做嘅轉向指令。 */
+function markLiftManeuvers(maneuvers, lifts) {
+  if (!lifts || !lifts.length) return;
+  for (var i = 0; i < maneuvers.length; i++) {
+    var m = maneuvers[i];
+    if (m.dir !== 'uturn') continue;
+    for (var j = 0; j < lifts.length; j++) {
+      var lf = lifts[j];
+      if (Math.abs(lf.s - m.s) > CONFIG.LIFT_MARK_M) continue;
+      m.dir = 'lift';
+      m.liftUp = lf.dz >= 0;
+      /* 目的地樓層**一定係 zB** —— zA 係入𨋢嗰層、zB 係出𨋢嗰層，
+         同 Δz 嘅正負無關。（寫成 `dz >= 0 ? zB : zA` 就係攞錯邊：
+         落𨋢嗰陣會講返**離開**嗰層，即係把樓上嘅樓層名派俾樓下。）
+         對唔上已知樓層（levelName 回空字串）就唔講樓層名，
+         退回「向上／向下」。 */
+      m.liftLevel = levelName(lf.zB);
+      lf.marked = true;
+      break;
+    }
+  }
+}
+
+/* 投影到路線：回傳最近點嘅沿線距離 s 同垂直距離 d */
+function projectToRoute(route, lng, lat) {
+  var pts = route.pts, best = { s: 0, d: Infinity };
+  for (var i = 0; i < pts.length - 1; i++) {
+    var ax = pts[i][0], ay = pts[i][1], bx = pts[i + 1][0], by = pts[i + 1][1];
+    var dx = bx - ax, dy = by - ay;
+    var len2 = dx * dx + dy * dy;
+    var u = len2 === 0 ? 0 : ((lng - ax) * dx + (lat - ay) * dy) / len2;
+    u = Math.max(0, Math.min(1, u));
+    var px = ax + u * dx, py = ay + u * dy;
+    var d = metersBetween(lng, lat, px, py);
+    if (d < best.d) {
+      var segLen = route.cum[i + 1] - route.cum[i];
+      best = { s: route.cum[i] + u * segLen, d: d };
+    }
+  }
+  return best;
+}
+
+/* 由設施索引取返原始資料列（欄序見 data/kt_facilities.js 嘅 meta.fieldOrder）。
+   旁白要睇名判斷類別（見 selectCues 同 facilityKind），所以要有名。 */
+function facilityRow(idx) {
+  var FAC = dataOrNull('KT_FACILITIES');
+  return (FAC && FAC.list[idx]) || null;
+}
+
+/* 沿線設施：回傳真正嘅沿線距離 s（米）。
+   注意：唔可以存 segment index —— 觸發排程要嘅係距離。 */
+/* 設施點對應嘅圖節點 —— 高度同連通性檢查都要用。
+ *
+ * 設施點係行人網絡線段嘅中點，實測每一點最近嘅節點距離都係 0.0 米
+ * （即係落正喺一個節點上面）。搵一次就快取，唔需要每個路線重建都掃
+ * 14,322 個節點。 */
+var FAC_NODE_CACHE = {};
+function facilityNode(idx) {
+  if (FAC_NODE_CACHE[idx] !== undefined) return FAC_NODE_CACHE[idx];
+  var row = facilityRow(idx), res = null;
+  if (row && GRAPH) {
+    var best = -1, bd = Infinity;
+    for (var i = 0; i < GRAPH.nodes.length; i++) {
+      var d = metersBetween(row[0], row[1], GRAPH.nodes[i][0], GRAPH.nodes[i][1]);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best >= 0) res = { node: best, dist: bd, z: GRAPH.nodes[best][2] };
+  }
+  FAC_NODE_CACHE[idx] = res;
+  return res;
+}
+
+/* 由路線呢一點行唔行得到去嗰個設施？（Dijkstra，**冇距離上限**）
+ *
+ * 用返輪椅嘅**可通行性**（樓梯／扶手電梯／屏障唔行得），唔用坡度權重 ——
+ * 問題係「去唔去到」，唔係「邊條路舒服」，更加唔係「行幾遠」。
+ *
+ * **呢個閘門喺兩條示範路線上面唔會剔走任何嘢** —— 唯一真正去唔到嘅係
+ * #17 沙福道天橋（輪椅要經樓梯先上得到），而佢 Δz 4.70 米，高度閘門
+ * 已經先剔走咗。保留佢係因為「唔可以向輪椅用戶講一個佢永遠去唔到嘅
+ * 設施」係一個真嘅正確性保證，唔係因為佢今日做緊嘢。
+ *
+ * 曾經用過一個距離預算（1.6 × 橫向距離 + 15 米），係錯嘅：實測每個
+ * 超出預算嘅設施，放寬上限之後都行得到（reach(unbounded)=Y），即係
+ * 被封鎖嘅唔係圖嘅連通性，而係我自己訂嘅預算。受害者係 #185
+ * 又一城升降機 —— 7.2 米外、同一個高度、真係行得到 —— 因為佢喺商場
+ * 另一邊入口入，要行多過 26.5 米。假陰性：用戶聽少咗一部真升降機。
+ *
+ * 判斷唔到就回 true（唔可以因為我哋查唔到就唔講）：設施離行人網絡太遠
+ * （> 12 米，即係根本唔喺呢個網絡上面）就唔判斷。 */
+function facilityReachable(fromNode, toNode) {
+  if (!GRAPH || fromNode < 0 || toNode < 0) return true;
+  if (fromNode === toNode) return true;
+  var dist = {}, pq = new Heap();
+  dist[fromNode] = 0;
+  pq.push(0, fromNode);
+  while (!pq.empty()) {
+    var top = pq.pop(), cur = top[1], dcur = top[0];
+    if (dcur > (dist[cur] === undefined ? Infinity : dist[cur])) continue;
+    if (cur === toNode) return true;
+    var list = ADJ[cur] || [];
+    for (var k = 0; k < list.length; k++) {
+      var e = GRAPH.edges[list[k]];
+      if (e[4] & HARD_EXCLUDE) continue;        // 輪椅行唔到嘅邊唔算
+      var nd = dcur + e[2];
+      var nx = (e[0] === cur) ? e[1] : e[0];
+      if (dist[nx] === undefined || nd < dist[nx]) { dist[nx] = nd; pq.push(nd, nx); }
+    }
+  }
+  return false;
+}
+
+/* zs：同 pts 平行嘅節點高度（設施配對要同一個高度先算「喺你條路上」）
+   path：圖節點索引，連通性檢查要用路線上面嗰點做起點 */
+function nearbyFacilities(pts, cum, zs, path, maxDist) {
+  var out = [];
+  var FAC = dataOrNull('KT_FACILITIES');
+  var types = FAC ? FAC.types : [];
+  var list = FAC ? FAC.list : [];
+
+  for (var i = 0; i < list.length; i++) {
+    var f = list[i];
+    var bx = f[0], by = f[1], bd = Infinity, bs = 0, bj = 0, bu = 0;
+    for (var j = 0; j < pts.length - 1; j++) {
+      var ax = pts[j][0], ay = pts[j][1], cx = pts[j + 1][0], cy = pts[j + 1][1];
+      var dx = cx - ax, dy = cy - ay, len2 = dx * dx + dy * dy;
+      var u = len2 === 0 ? 0 : ((bx - ax) * dx + (by - ay) * dy) / len2;
+      u = Math.max(0, Math.min(1, u));
+      var d = metersBetween(bx, by, ax + u * dx, ay + u * dy);
+      if (d < bd) {
+        bd = d;
+        bs = cum[j] + u * (cum[j + 1] - cum[j]);   // 真·沿線距離
+        bj = j; bu = u;                            // 記住投影位置，用嚟取路線高度
+      }
+    }
+    if (bd >= maxDist) continue;
+
+    /* 高度閘門：設施同路線喺投影點嘅高度差（見 CONFIG.FAC_SAME_LEVEL_M）。
+       唔比對高度的話，上一層嘅設施會被講成「喺你條路上」。 */
+    var fn = facilityNode(i);
+    var zr = (zs && zs.length > bj + 1)
+      ? zs[bj] + bu * (zs[bj + 1] - zs[bj]) : null;
+    var dz = (fn && zr !== null) ? fn.z - zr : 0;
+    if (Math.abs(dz) > CONFIG.FAC_SAME_LEVEL_M) continue;
+
+    /* 連通性閘門：同一個高度都要行得到過去先算。
+       用返路線上面嗰個節點做起點 —— 用戶就係企喺嗰度。
+       路線本身係用 HARD_EXCLUDE 揀出嚟嘅，所以段頭同段尾必然喺同一個
+       可通行連通區，用邊一端做起點都一樣。 */
+    if (fn && fn.dist <= 12 && path && path.length > bj) {
+      if (!facilityReachable(path[bj], fn.node)) continue;
+    }
+
+    out.push({ lng: bx, lat: by, type: types[f[2]], d: bd, s: bs,
+               idx: i, nameTC: f[3], nameEN: f[4], dz: dz });
+  }
+  // 同一位置唔好重複播（例如連續幾個有蓋通道標記）
+  out.sort(function (a, b) { return a.s - b.s; });
+  var dedup = [];
+  for (var k = 0; k < out.length; k++) {
+    if (dedup.length && Math.abs(dedup[dedup.length - 1].s - out[k].s) < 12 &&
+        dedup[dedup.length - 1].type === out[k].type) continue;
+    dedup.push(out[k]);
+  }
+  return dedup;
+}
+
+/* 地標選取：唔可以變成不停講嘢 —— 用戶要求「偶爾」 */
+function selectLandmarks(pts, cum, maneuvers) {
+  var cands = [];
+  var i, j;
+
+  function push(name, lng, lat, sal, kind, brand) {
+    var bx = lng, by = lat, bd = Infinity, bs = 0;
+    for (var k = 0; k < pts.length - 1; k++) {
+      var ax = pts[k][0], ay = pts[k][1], cx = pts[k + 1][0], cy = pts[k + 1][1];
+      var dx = cx - ax, dy = cy - ay, len2 = dx * dx + dy * dy;
+      var u = len2 === 0 ? 0 : ((bx - ax) * dx + (by - ay) * dy) / len2;
+      u = Math.max(0, Math.min(1, u));
+      var d = metersBetween(bx, by, ax + u * dx, ay + u * dy);
+      if (d < bd) { bd = d; bs = cum[k] + u * (cum[k + 1] - cum[k]); }
+    }
+    // 30m 先算「睇得到」。地標提示嘅用途係俾用家**望到**嚟確認行啱路，
+    // 隔咗成條街嘅名冇用（實測 44m 外嘅商戶都會被選中）。
+    if (bd > 30) return;
+    // 左右：路線方向同「路線點 → 地標」向量嘅叉積
+    var si = 0;
+    while (si < cum.length - 1 && cum[si + 1] < bs) si++;
+    var ax2 = pts[si][0], ay2 = pts[si][1];
+    var nx2 = pts[Math.min(si + 1, pts.length - 1)][0];
+    var ny2 = pts[Math.min(si + 1, pts.length - 1)][1];
+    var hx = (nx2 - ax2) * Math.cos(ay2 * Math.PI / 180), hy = (ny2 - ay2);
+    var vx = (lng - ax2) * Math.cos(ay2 * Math.PI / 180), vy = (lat - ay2);
+    var cross = hx * vy - hy * vx;
+    var side = Math.abs(cross) < 1e-12 ? 'ahead' : (cross > 0 ? 'left' : 'right');
+
+    cands.push({ name: name, s: bs, d: bd, salience: sal, kind: kind,
+                 brand: !!brand, side: side, announced: false });
+  }
+
+  var LM = dataOrNull('KT_LANDMARKS') || [];
+  for (i = 0; i < LM.length; i++) {
+    push(S.lang === 'en' && LM[i].enOk ? LM[i].nameEN : LM[i].nameTC,
+         LM[i].lng, LM[i].lat, LM[i].salience, LM[i].category);
+  }
+  var POI = (dataOrNull('KT_POIS') || {}).list || [];
+  for (i = 0; i < POI.length; i++) {
+    var p = POI[i];
+    var nm = pickPoiName(p);
+    if (!nm) continue;                 // 冇中文名又唔係品牌 → 唔講
+    /* 品牌排 salience 1：品牌招牌係最易一眼認到嘅辨路標誌（用戶要嘅
+       正正係「Apple 商店在右手邊」呢種確認）。原本一律 +1，令 Apple Store
+       由 4 變 5，排序上輸晒俾政府地標，永遠選唔中。
+       非品牌商戶維持 +1（唔想成條街都係鋪頭名）。 */
+    push(nm, p.lng, p.lat, p.brand ? 1 : p.salience + 1, p.kind, p.brand);
+  }
+
+  // 顯著度優先，再按沿線距離
+  cands.sort(function (a, b) {
+    return (a.salience - b.salience) || (a.s - b.s);
+  });
+
+  /* 間隔約束：兩個地標至少隔 80m；上限 5 個。
+   *
+   * 但品牌地標放寬到 45m。實測路線 A：Taste（113m）、Apple Store（174m）、
+   * MCL Cinema（260m）三個品牌招牌相隔只係 61m 同 86m —— 用 80m 規則會
+   * 將 Apple Store 剔走，而佢正正係用戶點名要嘅「apple 商店在右手邊」。
+   * 品牌招牌係最易一眼認到嘅辨路標誌，密度高少少係值得嘅；
+   * 非品牌（政府地標／商戶）維持 80m，唔想成條街都係鋪頭名。 */
+  var chosen = [];
+  for (i = 0; i < cands.length && chosen.length < 5; i++) {
+    var c = cands[i], ok = true;
+    var gap = c.brand ? 45 : 80;
+    for (j = 0; j < chosen.length; j++) {
+      if (Math.abs(chosen[j].s - c.s) < gap) { ok = false; break; }
+      /* 同一棟建築物只講一次。
+         實測路線 A 喺 272–284 米一段有大家樂、牛角、肯德基、胡椒廚房、
+         無印良品五個 POI —— 全部喺又一城裏面。淨係靠 80 米沿線間隔
+         會隨機揀到其中一間鋪頭，講「右手邊係牛角」對認路冇幫助，
+         應該講返個商場。所以橫向位置相近（<12 米）嘅只留排序最高嗰個。 */
+      if (Math.abs(chosen[j].d - c.d) < 12 &&
+          Math.abs(chosen[j].s - c.s) < 40) { ok = false; break; }
+    }
+    if (!ok) continue;
+    // 同名唔重複（OSM 同政府數據可能都有「又一城」）
+    for (j = 0; j < chosen.length; j++) {
+      if (chosen[j].name === c.name) { ok = false; break; }
+    }
+    if (!ok) continue;
+    chosen.push(c);
+  }
+
+  // 優先保留「轉彎後 30m 內」嘅地標 —— 嗰陣最需要確認行啱路
+  chosen.sort(function (a, b) { return a.s - b.s; });
+  return chosen;
+}
+
+/* 揀 POI 顯示名。
+ *
+ * 原本係 `return p.tcOk ? p.nameTC : ''` —— 即係中文模式下冇中文名嘅商戶
+ * 一律唔講。Apple Store 正正係 tcOk:false，所以佢雖然投影到路線 A
+ * 174 米處、橫向 10 米、右手邊（位置完全正確），都被 drop 咗。
+ * 用戶要求「例如 apple 商店在右手邊」，但個提示永遠唔會出現。
+ *
+ * 修法：冇中文名但係品牌（brand 有值）就照讀英文品牌名 ——
+ * 香港人講嘢本身就夾雜「Apple Store」「Taste」，聽落自然。
+ * 冇中文名又唔係品牌就照舊唔講：用中文語音讀純英文名唔似人話。 */
+function pickPoiName(p) {
+  if (S.lang === 'en') return p.nameEN || p.nameTC || '';
+  if (p.tcOk) return p.nameTC;
+  if (p.brand) return p.nameEN || p.brand;
+  return '';
+}
+
+/* 升降機／斜道提示（route.cues）。
+ *
+ * 用戶想要「多啲升降機／斜道嘅路線」，但實測冇路線槓桿：
+ *   · 圖內升降機邊只有 29 條、總長 10 米 —— LIFT_K 由 1.0 降到 0.5 對路線零影響
+ *   · 斜道鄰近獎勵由 0% 加到 40%，路線完全不變（639 米）
+ *   · 路線 A 本身已經經過 29 個貼近升降機、22 個貼近斜道嘅路口（30 米內）
+ * 即係「唔需要繞路都已經經過」。所以正確做法係**講出嚟**，唔係改路線 ——
+ * 加獎勵只會係死代碼，仲有為咗繞路而繞路嘅風險（用戶明確話唔想）。
+ *
+ * 對象係離線 22–40 米嘅設施：22 米內嘅已經由 route.facilities 喺 s-30 講咗，
+ * 唔可以重複；40 米外嘅仲喺視線範圍，講出所屬建築對認路有用。
+ */
+/* 旁述軌接住設施軌：設施軌講「喺路徑上」（<= FAC_ON_PATH_D），
+   旁述軌講「喺側邊 8–40 米」。以前呢度係 22，即 8–22 米嗰批兩邊都唔講；
+   而家無縫。 */
+var CUE_MIN_D = 8, CUE_MAX_D = 40;
+var CUE_MIN_GAP = 60, CUE_LIMIT = 4;
+function selectCues(pts, cum, zs, path, onRoute) {
+  var raw = nearbyFacilities(pts, cum, zs, path, CUE_MAX_D);
+  var used = {};
+  var i, j;
+  /* 只有**設施軌真係會講**嘅設施先算「講咗」。以前呢度將所有 22 米內嘅
+     設施一律標做已講 —— 但設施軌只講 8 米內（FAC_ON_PATH_D），所以
+     8–22 米嗰批兩邊都唔講，變成靜音帶。註釋一直寫住「兩個軌道無縫」，
+     但 `used` 係用 22 米集合建立，實際一直有 14 米闊嘅缺口。
+     （呢個係 CLAUDE.md 講「CUE_MIN_D 由 22 改 8 令兩軌相接」之後仍然存在
+     嘅問題 —— 改 CUE_MIN_D 對嗰批設施完全冇作用，因為 `used` 已經攔咗。） */
+  for (i = 0; i < onRoute.length; i++) {
+    if (onRoute[i].d <= CONFIG.FAC_ON_PATH_D) used[onRoute[i].idx] = true;
+  }
+
+  var out = [];
+  for (i = 0; i < raw.length; i++) {
+    var f = raw[i];
+    /* 名優先過 typeIdx。設施檔有 29 條叫「…扶手電梯」嘅記錄被歸類做 lift ——
+       扶手電梯輪椅用唔到，旁述句寫「有升降機，可以用」係直接誤導目標用戶。
+       所以呢類要**分開處理**，唔可以當佢係升降機：
+         · 輪椅／推車模式 → 完全唔講（用戶用唔到，講嚟做乜）
+         · 冇輪椅模式     → 照講，但講明係「扶手電梯」
+       （地圖標記同樣以名為準，唔會再畫成一個藍色圓形。） */
+    var kind = isEscalatorName(f.nameTC, f.nameEN) ? 'escalator' : f.type;
+    if (kind !== 'lift' && kind !== 'ramp' && kind !== 'escalator') continue;
+    if (kind === 'escalator' && S.wheel) continue;
+    if (f.d < CUE_MIN_D) continue;          // 已經由設施提示講咗
+    /* 冇建築物名嘅，講咗都幫唔到認路（見 cueNameUsable：冇名同淨係街名
+       都算冇名）。喺呢度先剔除，唔好白佔 4 個配額 —— 否則一句都冇用嘅
+       旁述會擠走後面真係講得出「右手邊係又一城」嘅一句。 */
+    if (!cueNameUsable(f.nameTC, f.nameEN)) continue;
+    if (used[f.idx]) continue;
+    out.push({
+      s: f.s, d: f.d, type: kind, idx: f.idx,
+      nameTC: f.nameTC, nameEN: f.nameEN, side: sideOfRoute(pts, cum, f.s, f.lng, f.lat),
+      announced: false
+    });
+  }
+
+  // 沿線間隔：唔可以變成不停講嘢（用戶要「偶爾」）
+  // 同名嘅亦只講一次（同一棟大樓唔同位置嘅兩個設施，講兩次只會令人混亂）
+  out.sort(function (a, b) { return a.s - b.s; });
+  var chosen = [];
+  for (i = 0; i < out.length && chosen.length < CUE_LIMIT; i++) {
+    var ok = true;
+    for (j = 0; j < chosen.length; j++) {
+      if (Math.abs(chosen[j].s - out[i].s) < CUE_MIN_GAP) { ok = false; break; }
+      if (chosen[j].nameTC && chosen[j].nameTC === out[i].nameTC) { ok = false; break; }
+    }
+    if (ok) chosen.push(out[i]);
+  }
+  return chosen;
+}
+
+/* 左右判定 —— 同 selectLandmarks 用同一套叉積，唔另寫一套。 */
+function sideOfRoute(pts, cum, s, lng, lat) {
+  var si = 0;
+  while (si < cum.length - 1 && cum[si + 1] < s) si++;
+  var ax = pts[si][0], ay = pts[si][1];
+  var nx = pts[Math.min(si + 1, pts.length - 1)][0];
+  var ny = pts[Math.min(si + 1, pts.length - 1)][1];
+  var hx = (nx - ax) * Math.cos(ay * Math.PI / 180), hy = (ny - ay);
+  var vx = (lng - ax) * Math.cos(ay * Math.PI / 180), vy = (lat - ay);
+  var cross = hx * vy - hy * vx;
+  if (Math.abs(cross) < 1e-12) return 'ahead';
+  return cross > 0 ? 'left' : 'right';
+}
+
+/* ===== 6. 提示排程 ===================================================== */
+
+function facilityWord(type) {
+  if (type === 'lift') return t('fLift');
+  if (type === 'ramp') return t('fRamp');
+  if (type === 'escalator') return t('fEscalator');
+  return t('fCovered');
+}
+
+/* 設施提示句。
+   唔用「前面{m}米有{設施}」呢個通用模板 —— 因為「有」+「有蓋通道」
+   會變成「有有蓋通道」，讀出嚟唔似人話。每類各自一句。 */
+/* m = 仲有幾多米先到。m <= 0（已經行到／啱啱過咗）唔可以講「前面負3米」，
+   改成「呢度有…」—— 用戶就係企喺嗰度。
+   g = 斜道坡度（ratio，其他類型係 null）。 */
+function facilitySentence(type, m, g) {
+  /* 斜道要先睇坡度：一條 38% 嘅斜道講「可以用」係講唔通嘅（見 CONFIG.RAMP_OK_G）。
+     g 係 null（數據冇坡度）就當普通斜道 —— 唔可以因為冇數據就反而唱衰佢。 */
+  if (type === 'ramp' && typeof g === 'number' && g > CONFIG.RAMP_OK_G) {
+    var p = Math.round(g * 100);
+    if (g > CONFIG.RAMP_MAX_G) {
+      return m <= 0 ? fmt(t('nRampTooSteepHere'), { p: p })
+                    : fmt(t('nRampTooSteep'), { m: m, p: p });
+    }
+    return m <= 0 ? fmt(t('nRampSteepHere'), { p: p })
+                  : fmt(t('nRampSteep'), { m: m, p: p });
+  }
+  if (m <= 0) return fmt(t('nFacilityHere'), { facility: facilityWord(type) });
+  if (type === 'covered') {
+    return fmt(t('nFacilityCovered'), { m: m });
+  }
+  return fmt(t('nFacility'), { m: m, facility: facilityWord(type) });
+}
+
+/* 設施名尾嘅類別詞要拆走。
+ *
+ * 政府數據嘅名係「建築物／街道 + 類別」：「又一城斜道」「達之路隧道」
+ * 「教育局九龍塘教育服務中心扶手電梯」。照名讀出嚟就係
+ * 「左手邊係又一城斜道，有斜道。」—— 同一個詞講兩次，唔似人話。
+ * 拆走尾嗰個類別詞，剩低嘅「又一城」正正就係用戶認路要用嘅資訊。
+ *
+ * 順帶解決「冇建築物名」嘅情況：23 條設施就叫「升降機」、5 條叫「斜道」、
+ * 2 條叫「扶手電梯」—— 拆完變空字串，即係冇資訊，唔應該講
+ * （「左手邊有升降機，可以用」幫唔到認路）。用戶決定：呢類唔再講。
+ *
+ * 第三種「拆完都冇資訊」係**街名**：政府數據用街道命名設施（「達之路斜道」
+ * 「南昌街天橋」），拆走尾綴淨低嘅就係用戶行緊嗰條路本身。實測 236 條
+ * 設施有 78 條係咁命名（其中 16 條係斜道，而只有斜道／升降機／扶手電梯
+ * 會入 cue 軌）。「右手邊係達之路，有斜道。」同「左手邊有斜道」一樣幫唔到
+ * 認路（達之路就係佢行緊嗰條），但仲會白佔一個 cue 配額。用戶就係報告呢句：
+ * 「第一段路，沒有斜道標識但還是説了」—— 設施喺路線右邊 32 米，冇一個
+ * 建築物名畀佢對得上。
+ *
+ * 一個規則同時解決三件事，唔需要另外維護一張「通用名」清單 ——
+ * 清單一定會同實際資料走樣。
+ */
+var FACILITY_SUFFIX = /(扶手電梯|升降機|斜道|隧道|天橋|有蓋通道|行人天橋|行人隧道|escalator|lift|elevator|ramp|covered walkway|footbridge|subway|underpass)+$/i;
+
+/* 街名。只喺 stripFacilitySuffix 之後套用 —— 「桃源街遊樂場」剝完尾綴係
+   「桃源街遊樂場」（尾字係「場」），唔會被誤殺；「達之路斜道」剝完係
+   「達之路」，中招。 */
+var STREET_NAME = /(道|街|路|里|巷|徑|坊|Avenue|Road|Street|Lane|Drive|Path|Highway)$/i;
+
+function stripFacilitySuffix(nm) {
+  return String(nm == null ? '' : nm).replace(FACILITY_SUFFIX, '').trim();
+}
+
+/* 剝完尾綴之後，剩返一個**講得出**嘅地名？街名唔算。 */
+function cuePlaceName(nm) {
+  var s = stripFacilitySuffix(nm);
+  return (s && !STREET_NAME.test(s)) ? s : '';
+}
+
+/* 有冇一個「講得出嘅」名？中英都要睇：路線只建一次、唔會跟介面語言重建，
+   只睇當前語言嘅話，切換語言之後就會忽然多返幾句出嚟。 */
+function cueNameUsable(tc, en) {
+  return !!(cuePlaceName(tc) || cuePlaceName(en));
+}
+
+/* 升降機／斜道／扶手電梯旁述句。
+ * 重點係講出**所屬建築物**（「右手邊係又一城，有升降機」）。
+ * 冇建築物名就回傳空字串 —— 呼叫方唔會出聲（見 §6）。 */
+function cueSentence(cue) {
+  var facility = facilityWord(cue.type);
+  /* 用 cuePlaceName 而唔係 stripFacilitySuffix：揀名同過濾要用同一把尺，
+     否則英文介面會揀到中文側過濾走咗嘅街名（見上）。 */
+  var name = S.lang === 'en'
+    ? (cuePlaceName(cue.nameEN) || cuePlaceName(cue.nameTC))
+    : (cuePlaceName(cue.nameTC) || cuePlaceName(cue.nameEN));
+  if (!name) return '';
+  var key = cue.side === 'left' ? 'nCueL'
+          : cue.side === 'right' ? 'nCueR' : 'nCueAhead';
+  return fmt(t(key), { name: name, facility: facility });
+}
+
+/* 每個 tick 檢查有冇提示要出 */
+function checkTriggers(route, s) {
+  var i, m, f, l;
+
+  // --- 轉向：遠距預告 / 接近 / 到達
+  //
+  // 一次只講**一個**轉向，而且一定係**指令卡當前顯示嗰個**，距離用實際剩餘米數。
+  //
+  // 原本係逐個轉向各自計時（任何轉向一到 s ≥ m.s−60 就播），呢個寫法假設
+  // 轉向之間相隔多過 60 米。實測路線 B 有五對轉向相隔 50 / 37 / 25 / 27 / 37 米，
+  // 於是行到 45 米時：卡片正確顯示「轉右」（69 米嗰個），語音已經偷步播咗
+  // 105 米嗰個嘅「前面 60 米要轉左」—— 就係用戶報「文字對、語音錯方向」。
+  //
+  // 第一次修復（只講最前面未講完嗰個）仍然漏咗一種情況：卡片要等到
+  // s ≥ 上一個轉向 + 12 米才轉去下一個轉向，所以喺嗰 12 米交接窗入面，
+  // 語音已經可以講下一個轉向 —— 上例 gap 37 米時就係 s ∈ [69, 81)：
+  // 卡片仍然顯示「轉右」，語音講「前面36米要轉左喇」。一模一樣嘅錯。
+  //
+  // 所以改為**跟卡片**：卡片顯示邊個轉向，就只講嗰個。卡片係用戶眼前嘅
+  // 事實來源（用戶自己講「文字導航是沒問題的」），語音跟住佢，方向就
+  // 由建構上唔可能對唔上。
+  //
+  // 三段提示一句都冇刪（用戶明確要求）：遠距預告照樣會講，只係相鄰太近嘅
+  // 轉向，開始講嗰陣實際距離已經唔夠 60 米，所以會如實讀出真數字
+  // （「前面38米要轉右喇」），而唔會夾硬報一個假嘅 60 米。
+  m = currentManeuver(route, s);
+  if (!m) {
+    // 過咗最後一個轉向 12 米之後 currentManeuver 會回 null ——
+    // 執漏：攞最前面未講完嗰個，否則最後一句「而家轉右」會冇人講。
+    for (i = 0; i < route.maneuvers.length; i++) {
+      if (!route.maneuvers[i].done['0']) { m = route.maneuvers[i]; break; }
+    }
+  }
+  if (m) {
+    var dirWord = t(m.dir === 'left' ? 'turnLeft'
+                  : m.dir === 'right' ? 'turnRight'
+                  : m.dir === 'slight-left' ? 'slightLeft'
+                  : m.dir === 'slight-right' ? 'slightRight'
+                  : m.dir === 'lift' ? 'liftWord' : 'uTurn');
+    var left = m.s - s;
+    var stage = (left <= 0) ? '0' : (left <= 20) ? '20' : (left <= 60) ? '60' : null;
+    if (stage && !m.done[stage]) {
+      // 較後嘅階段一講，之前嘅就當講過，唔可以之後回頭補播（次序會亂）
+      if (stage === '0') { m.done['60'] = true; m.done['20'] = true; }
+      if (stage === '20') { m.done['60'] = true; }
+      m.done[stage] = true;
+      var txt;
+      if (m.dir === 'lift') {
+        /* 升降機：60 米同 20 米兩段由呢度講（同轉向一樣，卡片顯示嗰個就講嗰個）。
+           **「埋身」嗰段唔喺呢度講** —— 佢屬於 §10 嘅搭𨋢處理，因為嗰度同時
+           要停 LIFT_HOLD_MS 模擬升降（停低同旁白要係同一件事），而且嗰句連
+           樓層名都由嗰度出。呢度照樣 m.done['0'] = true，免得佢一直掛住。 */
+        txt = (stage === '20')
+            ? (m.liftLevel
+               ? fmt(t('nLiftSoonNearLevel'),
+                     { m: Math.round(left), level: m.liftLevel,
+                       uw: t(m.liftUp ? 'liftUpWord' : 'liftDownWord') })
+               : fmt(t('nLiftSoonNear'), { m: Math.round(left) }))
+            : fmt(t('nLiftSoon'), { m: Math.round(left) });
+        if (stage === '0') txt = null;
+      } else {
+        txt = (stage === '0') ? fmt(t('nTurnNow'), { dir: dirWord })
+            : (stage === '20') ? fmt(t('nTurnSoonNear'), { m: Math.round(left), dir: dirWord })
+            : fmt(t('nTurnSoon'), { m: Math.round(left), dir: dirWord });
+      }
+      // key 用轉向本身嘅索引，唔可以再用迴圈變數 i —— 主要路徑而家唔經迴圈
+      if (txt) narratorSay(txt, 3, 'turn' + route.maneuvers.indexOf(m) + stage);
+    }
+  }
+
+  // --- 設施：s-30 預告
+  for (i = 0; i < route.facilities.length; i++) {
+    f = route.facilities[i];
+
+    // 有蓋通道係連續嘅，唔可以逐個標記播報 ——
+    // 實測會變成「前面30米有有蓋通道」講足四次。
+    // 只有落雨先值得講，而且全程最多講兩次。
+    if (f.type === 'covered') {
+      if (!S.rain) { f.announced = true; continue; }
+      if (route._coveredSaid >= 2) { f.announced = true; continue; }
+    }
+
+    /* 只講**真係喺路徑上**嘅設施。
+       以前呢度冇呢個檢查，22 米走廊內乜都照講，於是路線 A 會講
+       「前面30米有斜道，可以用」而嗰條斜道橫向 18 米、喺條路側邊。
+       用戶行到去望唔到斜道 —— 就係「報錯無障礙設施」。
+       側邊 8–40 米嘅交返俾旁述軌（cue），佢會如實講「右手邊係…，有升降機」。
+       兩個軌道加埋無縫亦無重疊。 */
+    if (f.d > CONFIG.FAC_ON_PATH_D) { f.announced = true; continue; }
+
+    /* 路線真係搭嘅嗰部𨋢已經由轉向軌講咗三次（見 buildRoute），
+       唔可以再喺呢度講多一次「前面30米有升降機，可以用」。 */
+    if (f.liftRidden) { f.announced = true; continue; }
+
+    if (!f.announced && s >= f.s - 30 && s <= f.s + 8) {
+      f.announced = true;
+      var row = facilityRow(f.idx);
+      var kind = row ? facilityKind(row, f.type) : f.type;
+      /* 扶手電梯唔可以講「有升降機，可以用」—— 輪椅用唔到。
+         數據有 29 條叫「…扶手電梯」嘅記錄被歸類做 lift，所以一定要靠名
+         判斷。輪椅／推車模式一律唔講（用戶用唔到，講嚟做乜）；冇輪椅模式
+         就照講，而且講明係扶手電梯。 */
+      if (kind === 'escalator' && S.wheel) continue;
+      if (kind === 'covered') route._coveredSaid++;
+      /* 距離一定要**真**（以前寫死 30）。寫死嘅後果：斜道喺 s=1 米，
+         一開場就講「前面30米有斜道」，而用戶企喺斜道上面 ——
+         佢望住前面 30 米，當然咩都見唔到，就係「地圖根本冇顯示有斜道」。
+         同轉向旁白係一模一樣嘅錯：一個只在作者測試嗰個情況先啱嘅常數。 */
+      /* row[6] = 斜道坡度（見 CONFIG.RAMP_OK_G）。其他類型係 null。 */
+      narratorSay(facilitySentence(kind, Math.round(f.s - s), row ? row[6] : null),
+                  2, 'fac' + i);
+    }
+  }
+
+  // --- 升降機／斜道旁述：s-15，優先級 1
+  // 同轉向（3）、設施（2）都唔同級，永遠唔會搶佢哋 —— 旁述係錦上添花。
+  for (i = 0; i < route.cues.length; i++) {
+    var c = route.cues[i];
+    if (!c.announced && s >= c.s - 15) {
+      c.announced = true;
+      // 冇建築物名嘅一句係空字串 —— 唔出聲（用戶要求唔再講）
+      var cueTxt = cueSentence(c);
+      if (cueTxt) narratorSay(cueTxt, 1, 'cue' + i);
+    }
+  }
+
+  // --- 地標：s 一到就講
+  for (i = 0; i < route.landmarks.length; i++) {
+    l = route.landmarks[i];
+    if (!l.announced && s >= l.s) {
+      l.announced = true;
+      var txt = l.side === 'left' ? fmt(t('nLandmarkL'), { name: l.name })
+              : l.side === 'right' ? fmt(t('nLandmarkR'), { name: l.name })
+              : fmt(t('nLandmarkAhead'), { name: l.name });
+      narratorSay(txt, 1, 'lm' + i);
+    }
+  }
+}
+
+/* ===== 7. 旁白器 ========================================================
+   核心修正：唔可以 await 語音去阻塞位置更新。
+   位置同語音完全解耦；單槽；只喺嚴格更高優先級時打斷。
+   ====================================================================== */
+
+var narrator = {
+  busy: false,
+  priority: -1,
+  timer: null,
+  poll: null,      // 輪詢 speechSynthesis.speaking 嘅 handle
+  retry: [],       // 被更高優先級搶佔而丟棄嘅提示，保留重試資格
+  /* 用戶撳咗暫停（見 pauseSpeech）。暫停期間：
+       · speechSynthesis 本身都 pause 咗（唔係 cancel —— 要可以續播）
+       · 唔會開始新句子（narratorDrain 早退）
+       · **唔會**當正在播嗰句講完（輪詢同 watchdog 都唔可以響）
+     三個都要做齊，缺一個就會出現「撳咗暫停，語音照樣播落去／跳下一句」。 */
+  suspended: false
+};
+
+/* 世代編號。narrator.poll / narrator.timer 都係單槽，而輪詢鏈係自我重排嘅
+ * 遞迴 setTimeout：一旦句子被搶佔，舊鏈嘅 handle 會被新鏈覆蓋，舊鏈就
+ * 永遠冇人 clear，仍然會喺之後某一刻叫 finish() —— 而嗰陣佢已經唔再代表
+ * 正在播緊嘅句子，結果係「新句播到一半就被當成講完」。加一個世代編號，
+ * 舊鏈一發現自己唔係最新就靜靜咁死。 */
+var narratorGen = 0;
+
+var RETRY_WINDOW_M = 15;   // 喺 15 米內仍然可以重試
+
+/* 估算一句要講幾久（毫秒）。
+ *
+ * 舊版用 `text.length * 150`：19 字嘅開場白 → 2850ms。但廣東話 rate 0.85
+ * 講 19 個字實際要 5–7 秒。於是 watchdog 提早響 → narrator.busy 提早變
+ * false → narratorDrain() 即刻補播下一個轉向提示 → speak() 又 cancel() →
+ * 開場白被斬。兩個缺陷一齊發生，所以係必然，唔係偶然。
+ *
+ * 分開成一個函數係為了同 harness 用同一條公式：測試嘅語音 stub 一定要
+ * 按同一條式推算時長，否則佢會喺 50ms 就當講完，結構上永遠測唔到呢類 bug。 */
+var MS_PER_CJK = 300;      // 漢字（rate 0.85）
+var MS_PER_LATIN = 90;     // 拉丁字母／數字
+var SPEECH_MS_MIN = 4000, SPEECH_MS_MAX = 30000;
+function speechMs(text) {
+  var cjk = 0, latin = 0, i;
+  for (i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) > 0x2E80) cjk++; else latin++;
+  }
+  var ms = cjk * MS_PER_CJK + latin * MS_PER_LATIN;
+  return Math.min(Math.max(ms, SPEECH_MS_MIN), SPEECH_MS_MAX);
+}
+
+function narratorBusy() { return narrator.busy; }
+
+/* remember=false 用於「點標記睇設施資訊」之類嘅旁述：
+   佢要經 live region 報讀，但唔應該蓋掉「再講一次」記住嘅導航指令。 */
+function narratorSay(text, priority, key, remember) {
+  if (!text) return;
+  if (remember !== false) S.lastSpoken = text;
+
+  var log = document.getElementById('narrator-log');
+  if (log) log.textContent = text;
+  var st = document.getElementById('a11y-status');
+  if (st) st.textContent = text;
+
+  if (narrator.busy) {
+    if (priority <= narrator.priority) {
+      // 唔排隊（避免堆積截斷），但保留重試資格：
+      // 否則會出現「標記咗已播報，但用家其實冇聽到」——
+      // 呢個正是舊 app 漏轉向嘅成因之一。
+      if (priority >= 1) {
+        narrator.retry.push({
+          text: text, priority: priority, key: key,
+          expireS: (S.walk ? S.walk.s : 0) + RETRY_WINDOW_M
+        });
+      }
+      return;
+    }
+    cancelSpeech();                              // 嚴格更高 → 打斷
+  }
+
+  narrator.busy = true;
+  narrator.priority = priority;
+  narratorGen++;
+  var myGen = narratorGen;
+
+  var done = false;
+  function finish() {
+    if (done) return;      // idempotent latch
+    done = true;
+    // 已經有新句子接手 —— 呢個 finish 係舊世代嘅殘留回呼，唔可以再動狀態
+    if (myGen !== narratorGen) return;
+    if (narrator.timer) { clearTimeout(narrator.timer); narrator.timer = null; }
+    if (narrator.poll) { clearTimeout(narrator.poll); narrator.poll = null; }
+    narrator.busy = false;
+    narrator.priority = -1;
+    /* 暫停期間唔可以接住播下一句 —— 否則用戶撳咗暫停，仲會聽到新嘅
+       提示（例如「前面20米要轉左」），佢會以為個掣壞咗。恢復嗰陣
+       togglePlay 會自己叫一次 narratorDrain() 補返。 */
+    if (narrator.suspended) return;
+    narratorDrain();
+  }
+
+  speak(text, finish);
+
+  /* 完成訊號有三重，由最可靠排到最後：
+     1. onend —— 正常路徑
+     2. 輪詢 speechSynthesis.speaking —— onend 喺部分瀏覽器唔可靠（尤其
+        係 cancel() 之後），而 speaking 係瀏覽器自己講嘅真話，比任何時長
+        估算可靠。要有 600ms 寬限：speak() 之後 speaking 未必即刻變 true，
+        否則會一叫就當講完。
+     3. watchdog —— 只做「真正失控」嘅保險，唔再係正常完成路徑。
+        佢一響就代表上面兩個訊號都冇觸發，屬異常，所以留低紀錄。
+     暫停期間（narrator.suspended）2 同 3 都要停手：嗰陣「唔出聲」係
+     用戶自己造成嘅，唔係講完，亦唔係失控。 */
+  if (speechSynth && typeof speechSynth.speaking === 'boolean') {
+    var pollTicks = 0;
+    narrator.poll = setTimeout(function pollSpeaking() {
+      if (done || myGen !== narratorGen) return;
+      pollTicks++;
+      if (!narrator.suspended && pollTicks >= 3 && !speechSynth.speaking) {
+        finish(); return;
+      }
+      narrator.poll = setTimeout(pollSpeaking, 250);
+    }, 250);
+  }
+
+  var watchdogMs = speechMs(text) * 1.6 + 2000;
+  /* 暫停期間要重新上鏈而唔可以當佢失控：watchdogMs 係按「一路播落去」
+     估算嘅，暫停幾久都唔應該令佢響。 */
+  function armWatchdog() {
+    narrator.timer = setTimeout(function () {
+      if (done || myGen !== narratorGen) return;
+      if (narrator.suspended) { armWatchdog(); return; }
+      if (window.console && console.warn) {
+        console.warn('[narrator] watchdog 觸發（onend 同 speaking 都冇回應）:', text);
+      }
+      finish();
+    }, watchdogMs);
+  }
+  armWatchdog();
+}
+
+/* 閒置時補播被搶佔嘅提示；過期就丟棄 */
+function narratorDrain() {
+  if (narrator.busy || narrator.suspended || !narrator.retry.length) return;
+  var nowS = S.walk ? S.walk.s : 0;
+  var best = -1;
+  for (var i = 0; i < narrator.retry.length; i++) {
+    if (narrator.retry[i].expireS < nowS) continue;      // 過期
+    if (best < 0 || narrator.retry[i].priority > narrator.retry[best].priority) best = i;
+  }
+  if (best < 0) { narrator.retry = []; return; }         // 全部過期
+  var item = narrator.retry.splice(best, 1)[0];
+  narratorSay(item.text, item.priority, item.key);
+}
+
+function narratorCancel() {
+  /* 一定要先解除暫停再 cancel()。若果之前撳過暫停，speechSynthesis 仲係
+     paused 狀態；cancel() 清隊列之後，部分引擎會留住 paused 旗標，之後
+     所有 speak() 都會靜靜咁排隊唔出聲 —— 睇落就係「轉路線之後冇咗語音」。
+     resume() 對冇暫停嘅情況係冇作用嘅，所以放心叫。 */
+  narrator.suspended = false;
+  resumeSpeech();
+  cancelSpeech();
+  if (narrator.timer) { clearTimeout(narrator.timer); narrator.timer = null; }
+  if (narrator.poll) { clearTimeout(narrator.poll); narrator.poll = null; }
+  narratorGen++;            // 令所有在途嘅回呼即刻失效
+  narrator.busy = false;
+  narrator.priority = -1;
+  narrator.retry = [];
+}
+
+/* ===== 8. 語音 ========================================================= */
+
+var speechSynth = window.speechSynthesis || null;
+var VOICES = [];
+
+function loadVoices() {
+  if (!speechSynth) return;
+  VOICES = speechSynth.getVoices() || [];
+}
+if (speechSynth) {
+  loadVoices();
+  speechSynth.onvoiceschanged = loadVoices;
+}
+
+/* 語音優先鏈；搵唔到廣東話要明確告知，唔可以靜靜轉英文 */
+function pickVoice() {
+  loadVoices();
+  if (!VOICES.length) return null;
+  var want = (S.lang === 'en')
+    ? ['en-GB', 'en-US', 'en-AU', 'en']
+    : ['zh-HK', 'yue-HK', 'zh-TW', 'zh-CN', 'zh'];
+  var i, j;
+  for (i = 0; i < want.length; i++) {
+    for (j = 0; j < VOICES.length; j++) {
+      if ((VOICES[j].lang || '').toLowerCase().indexOf(want[i].toLowerCase()) === 0) {
+        return VOICES[j];
+      }
+    }
+  }
+  return null;
+}
+
+/* 講一句。**呢度唔可以自己 cancel()。**
+ *
+ * 之前呢度開頭有一句 `speechSynth.cancel()`，就係「開場白講到一半被斬」
+ * 嘅主因：speak() 係旁白器唯一嘅發聲入口，所以連「閒置之後補播重試句」
+ * 都會清空正在播緊嘅語音。取消係旁白器嘅決定 —— narratorSay() 喺嚴格
+ * 更高優先級時已經自己叫 cancelSpeech()，唔應該喺呢層無條件做。 */
+function speak(text, onDone) {
+  if (!speechSynth) { if (onDone) setTimeout(onDone, 400); return; }
+
+  var u = new SpeechSynthesisUtterance(text);
+  var v = pickVoice();
+  u.lang = (S.lang === 'en') ? 'en-GB' : 'zh-HK';
+  if (v) { u.voice = v; u.lang = v.lang || u.lang; }
+  u.rate = CONFIG.RATE;
+  u.pitch = 1.0;
+  u.onend = function () { if (onDone) onDone(); };
+  u.onerror = function () { if (onDone) onDone(); };
+
+  setTimeout(function () {
+    try { speechSynth.speak(u); } catch (e) { if (onDone) onDone(); }
+  }, 60);
+}
+
+function cancelSpeech() {
+  if (!speechSynth) return;
+  try { speechSynth.cancel(); } catch (e) {}
+}
+
+/* 暫停／繼續語音。用戶報告「撳咗暫停，語音照樣講落去」—— 因為
+ * walker.pause() 只係清咗行路嘅 timer，完全冇掂過 speechSynthesis。
+ *
+ * 呢兩個函數**唔可以**擺入 walker.pause()／walker.resume()：beginAfterIntro()
+ * 就係靠「先講開場白、再 pause 住個 walker 等佢講完」。如果 pause 順手停埋
+ * 語音，開場白一開始就停住，永遠唔會有 onend，個等就永遠等唔完 —— 死鎖，
+ * 而且係「一開始就卡住」嘅死鎖。所以暫停語音係 togglePlay()（用戶手勢）嘅事。
+ *
+ * 一定要用 pause() 而唔係 cancel()：cancel 會將講到一半嘅句子銷毀，
+ * 恢復之後冇得續，用戶會覺得「一撳暫停就食咗半句」。而且 cancel 亦會令
+ * narrator 嗰邊嘅世代鏈全部失效，變成要重新講過。
+ *
+ * 兩個都用 typeof 檢查：部分引擎（同測試 harness）冇呢兩個方法，
+ * 冇就要靜靜咁退化，唔可以拋錯。 */
+function pauseSpeech() {
+  if (!speechSynth || typeof speechSynth.pause !== 'function') return false;
+  try { speechSynth.pause(); return true; } catch (e) { return false; }
+}
+
+function resumeSpeech() {
+  if (!speechSynth || typeof speechSynth.resume !== 'function') return false;
+  try { speechSynth.resume(); return true; } catch (e) { return false; }
+}
+
+/* ===== 9. 地圖 ========================================================= */
+
+function initMap() {
+  if (!window.mapboxgl) return;
+  mapboxgl.accessToken = CONFIG.MAPBOX_KEY;
+
+  try {
+    MAP = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/streets-v12',
+      center: CONFIG.CENTER,
+      zoom: CONFIG.ZOOM,
+      attributionControl: true
+    });
+  } catch (e) { return; }
+
+  MAP.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right');
+
+  MAP.on('load', function () {
+    mapReady = true;
+    applyHighContrast();
+    addFacilityMarkers();
+    if (S.route) drawRoute(S.route);
+  });
+}
+
+/* 高對比圖層塗色 —— 每層獨立 try/catch，唔會因為個別圖層名改咗而爆 */
+function applyHighContrast() {
+  if (!MAP) return;
+  var layers = (MAP.getStyle() && MAP.getStyle().layers) || [];
+  for (var i = 0; i < layers.length; i++) {
+    var L = layers[i];
+    try {
+      if (L.type === 'background') {
+        MAP.setPaintProperty(L.id, 'background-color', '#FFF8F0');
+      } else if (L.type === 'water') {
+        MAP.setPaintProperty(L.id, 'fill-color', '#BBDEFB');
+      } else if (L.type === 'road') {
+        var isMajor = /motorway|trunk|primary/i.test(L.id);
+        MAP.setPaintProperty(L.id, 'line-color', isMajor ? '#FFFFFF' : '#FFFFFF');
+        MAP.setPaintProperty(L.id, 'line-opacity', 0.95);
+        if (isMajor) MAP.setPaintProperty(L.id, 'line-width', 7);
+      } else if (L.type === 'symbol') {
+        MAP.setPaintProperty(L.id, 'text-color', '#1A1A1A');
+        MAP.setPaintProperty(L.id, 'text-halo-color', '#FFFFFF');
+        MAP.setPaintProperty(L.id, 'text-halo-width', 2.2);
+      }
+    } catch (e) { /* 圖層唔存在或唔支援 —— 略過 */ }
+  }
+}
+
+/* 設施標記：形狀 + 顏色雙重編碼，**五個形狀**。
+ *
+ * 圓=升降機、三角=斜道、方=有蓋通道、階梯形=扶手電梯、菱形=已報告障礙。
+ *
+ * 為咗低視力用戶，規則係：任何一個形狀嘅**輪廓**都要同其餘四個唔同。
+ * 顏色只係第二重編碼 —— 用戶睇唔清顏色嘅時候，輪廓仍然分得出。
+ * 所以扶手電梯唔可以係「另一個顏色嘅圓形」，一定要係一個新輪廓：
+ * 三級階梯。五個形狀之中只有佢有「級」。
+ *
+ * 另一條規則：每個形狀入面都要有一個白色圖案講明係「乜」——
+ * 只有輪廓嘅話，用戶分得出但睇唔明。低視力唔等於睇唔到，
+ * 白色圖案喺深色底上面對比係最高嘅。
+ *
+ * 顏色一律經 CSS 變數（:root）讀，唔喺呢度再寫一次十六進位。圖例同
+ * 地圖標記由**同一個函數**產生 —— 之前兩邊各寫一份 SVG，改一邊就會靜靜
+ * 咁走樣（呢個 codebase 反覆出現嘅同一類問題）。
+ *
+ * disabled：輪椅／推車模式之下，扶手電梯係用唔到嘅，加一道斜線劃掉。
+ */
+function facilitySvg(kind, px, disabled) {
+  var s = px || 40;
+  var stroke = ' stroke="#fff" stroke-width="3" stroke-linejoin="round"';
+  var shape, inner, fill;
+
+  if (kind === 'lift') {
+    fill = 'var(--color-lift)';
+    shape = '<circle cx="20" cy="20" r="16.5" fill="' + fill + '"' + stroke + '/>';
+    // 上＋落箭嘴：升降機嘅通用圖案
+    inner = '<path d="M13.5 12.5l5 8.5h-10z" fill="#fff"/>' +
+            '<path d="M26.5 27.5l-5-8.5h10z" fill="#fff"/>';
+  } else if (kind === 'ramp') {
+    fill = 'var(--color-ramp)';
+    shape = '<path d="M20 3l16 31H4z" fill="' + fill + '"' + stroke + '/>';
+    // 楔形＝斜台（升起方向同扶手電梯一致：向右上）
+    inner = '<path d="M27.5 27.5H12.5L27.5 19z" fill="#fff"/>';
+  } else if (kind === 'covered') {
+    fill = 'var(--color-covered)';
+    shape = '<rect x="3.5" y="3.5" width="33" height="33" rx="4" fill="' + fill +
+            '"' + stroke + '/>';
+    // 雨傘＝遮雨
+    inner = '<path d="M20 11.5a9.5 9.5 0 019.5 9.5h-19a9.5 9.5 0 019.5-9.5z" fill="#fff"/>' +
+            '<path d="M20 21v5.5a3 3 0 01-6 0" fill="none" stroke="#fff" ' +
+            'stroke-width="2.8" stroke-linecap="round"/>';
+  } else if (kind === 'escalator') {
+    fill = 'var(--color-escalator)';
+    // 三級階梯輪廓 —— 唯一有「級」嘅形狀，剪影都認得出
+    shape = '<path d="M4 36V21h7v-5h7v-5h7V6h11v30z" fill="' + fill + '"' + stroke + '/>';
+    // 上箭嘴＝向上行
+    inner = '<path d="M20 17l6 7h-12z" fill="#fff"/>' +
+            '<rect x="18" y="24" width="4" height="9" rx="1.5" fill="#fff"/>';
+    if (disabled) {
+      // 輪椅／推車模式：呢個設施用唔到 —— 斜線劃掉（唔靠顏色單獨表達）
+      inner += '<path d="M8 32L32 8" stroke="#fff" stroke-width="4.6" ' +
+               'stroke-linecap="round"/>';
+    }
+  } else {
+    fill = 'var(--color-warn)';
+    shape = '<path d="M20 2.5L37.5 20 20 37.5 2.5 20z" fill="' + fill + '"' + stroke + '/>';
+    inner = '<path d="M20 9v10" stroke="#fff" stroke-width="4" stroke-linecap="round"/>' +
+            '<circle cx="20" cy="25.5" r="2.6" fill="#fff"/>';
+  }
+
+  // aria-hidden：地圖標記係裝飾性 —— 設施類型已經由語音提示同圖例傳達，
+  // 236 個標記逐個讀出只會淹沒報讀器。
+  return '<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="' + s +
+         '" height="' + s + '" viewBox="0 0 40 40">' + shape + inner + '</svg>';
+}
+
+var MARKERS = [];
+
+/* 設施名（跟當前語言）。設施檔 236 條全部中英齊全。 */
+function facilityName(f) {
+  if (S.lang === 'en') return f[4] || f[3] || '';
+  return f[3] || f[4] || '';
+}
+
+/* 設施類別 —— 但以名稱優先過 typeIdx。
+ *
+ * 設施檔有 17 條叫「又一城扶手電梯」嘅記錄被歸類做 lift。扶手電梯輪椅
+ * 用唔到，用「升降機」介紹佢會直接誤導目標用戶。所以名稱同類型矛盾時
+ * 以名為準，並且明講「輪椅用唔到」。
+ * （長遠應該喺 scripts/build_facilities.py 修正分類，唔係喺前端補救。） */
+function isEscalatorName(tc, en) {
+  var nm = (tc || '') + ' ' + (en || '');
+  return nm.indexOf('扶手電梯') >= 0 || nm.toLowerCase().indexOf('escalator') >= 0;
+}
+
+function facilityKind(f, type) {
+  return isEscalatorName(f[3], f[4]) ? 'escalator' : type;
+}
+
+/* 類別詞由 facilityWord() 一個地方出（見 §6）—— 之前呢度另有一個
+   facilityWordFor()，兩份對照表遲早會走樣，而家只留一個入口。 */
+function facilityWordFor(kind) {
+  return facilityWord(kind);
+}
+
+/* 彈出內容。名同類型一樣就唔重複講（設施檔有 23 條就叫「升降機」）。 */
+function facilityPopupText(kind, name, g) {
+  var label = facilityWordFor(kind);
+  var out = label;
+  if (name && name !== label && name !== facilityWord(kind)) {
+    out = label + ' · ' + name;
+  }
+  if (kind === 'escalator') out += '（' + t('escWarn') + '）';
+  if (kind === 'ramp' && typeof g === 'number' && g > CONFIG.RAMP_OK_G) {
+    out += '（' + fmt(g > CONFIG.RAMP_MAX_G ? t('rampTooSteepLabel')
+                                            : t('rampSteepLabel'),
+                       { p: Math.round(g * 100) }) + '）';
+  }
+  return out;
+}
+
+/* 標記可唔可以點？
+ *
+ * 可以，而且要滿足 ≥60px 觸控要求 —— 所以外面包一個 60px 嘅點擊區，
+ * 圖形本身照舊 40px（雨天 56px）。用戶報過「點咗冇反應」，原因係呢個
+ * 功能由頭到尾冇實作過（全檔冇 Popup、標記冇 click handler）。
+ *
+ * 標記維持 aria-hidden="true"：236 個裝飾性標記唔應該淹沒報讀器
+ * （Phase 4 嘅決定）。所以唔可以話佢支援鍵盤 —— 點擊係指標先有嘅
+ * 方便，而同一項資訊會經 #a11y-status live region 報讀，導航行進時
+ * 設施提示亦一樣會講。 */
+function onFacilityClick(f, type) {
+  var kind = facilityKind(f, type);
+  var name = facilityName(f);
+  /* f[6] = 斜道坡度（rationale 見 CONFIG.RAMP_OK_G）。點標記嘅用戶係主動
+     想知呢個設施係咩，坡度就係佢最需要嘅一個數 —— 冇理由收埋。 */
+  var g = f[6];
+  var text = facilityPopupText(kind, name, g);
+
+  if (MAP && window.mapboxgl) {
+    var node = document.createElement('div');
+    node.className = 'fac-pop';
+    var strong = document.createElement('strong');
+    strong.textContent = facilityWordFor(kind);
+    node.appendChild(strong);
+    if (name) {
+      var span = document.createElement('span');
+      span.textContent = name;
+      node.appendChild(span);
+    }
+    if (kind === 'ramp' && typeof g === 'number' && g > CONFIG.RAMP_OK_G) {
+      var gp = document.createElement('span');
+      gp.textContent = fmt(g > CONFIG.RAMP_MAX_G ? t('rampTooSteepLabel')
+                                                  : t('rampSteepLabel'),
+                           { p: Math.round(g * 100) });
+      node.appendChild(gp);
+    }
+    // 用 setDOMContent + textContent，唔用 setHTML 拼資料字串
+    new mapboxgl.Popup({ offset: 30, closeButton: true, closeOnClick: true })
+      .setLngLat([f[0], f[1]]).setDOMContent(node).addTo(MAP);
+  }
+
+  // remember=false：唔可以蓋掉「再講一次」記住嘅導航指令。
+  // 優先級 0 永遠唔會搶轉向提示。
+  narratorSay(text, 0, 'facinfo', false);
+}
+
+/* 重畫設施標記。天氣轉嘅時候一定要重畫 —— 有蓋通道標記會放大同加光暈。
+   之前 addFacilityMarkers() 只在 MAP.on('load') 叫過一次，所以呢個效果
+   由頭到尾冇生效過。 */
+function rebuildFacilityMarkers() {
+  if (!MAP) return;
+  for (var i = 0; i < MARKERS.length; i++) {
+    if (MARKERS[i].marker) MARKERS[i].marker.remove();
+  }
+  MARKERS = [];
+  addFacilityMarkers();
+}
+
+/* 一個有蓋結構＝一個標記。
+ *
+ * 有蓋通道係**連續結構**，但資料係一段一段落點：實測 132 個有蓋標記
+ * 分成 37 組，**24 組多過一個**，最大一組 12 個全部喺大坑東道天橋，
+ * 南昌街天橋亦有 11 + 10 個。地圖上就係同一條橋插住一疊圖標 ——
+ * 用戶報「有蓋通道嘅標識有重複、冗餘」。
+ *
+ * 每組只畫一個，揀組內**最接近用戶路線**嗰個（即用戶行到最接近嗰一點）——
+ * 呢個就係「只顯示離用戶最近嘅一個」。未揀路線時冇「用戶位置」可言，
+ * 跟資料次序取頭一個。
+ *
+ * 只做有蓋：升降機同斜道每一個都係獨立設施，各自有意義，唔應該合併。
+ */
+var COVER_CLUSTER_M = 40;
+
+function distToRoute(route, f) {
+  var pts = route.pts, bd = Infinity;
+  for (var j = 0; j < pts.length - 1; j++) {
+    var ax = pts[j][0], ay = pts[j][1], cx = pts[j + 1][0], cy = pts[j + 1][1];
+    var dx = cx - ax, dy = cy - ay, len2 = dx * dx + dy * dy;
+    var u = len2 === 0 ? 0 : ((f[0] - ax) * dx + (f[1] - ay) * dy) / len2;
+    u = Math.max(0, Math.min(1, u));
+    var d = metersBetween(f[0], f[1], ax + u * dx, ay + u * dy);
+    if (d < bd) bd = d;
+  }
+  return bd;
+}
+
+function coveredDrawSet(list, types) {
+  var cov = [];
+  for (var i = 0; i < list.length; i++) {
+    if (types[list[i][2]] === 'covered') cov.push(i);
+  }
+  var route = S.route;
+  if (route && route.pts && route.pts.length > 1) {
+    cov.sort(function (a, b) {
+      return distToRoute(route, list[a]) - distToRoute(route, list[b]);
+    });
+  }
+  var keep = {}, kept = [];
+  for (var k = 0; k < cov.length; k++) {
+    var idx = cov[k], ok = true;
+    for (var j = 0; j < kept.length; j++) {
+      if (metersBetween(list[idx][0], list[idx][1],
+                        list[kept[j]][0], list[kept[j]][1]) < COVER_CLUSTER_M) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) { kept.push(idx); keep[idx] = true; }
+  }
+  return keep;
+}
+
+function addFacilityMarkers() {
+  var FAC = dataOrNull('KT_FACILITIES');
+  if (!MAP || !FAC) return;
+  var types = FAC.types;
+  var list = FAC.list;
+  var drawCover = coveredDrawSet(list, types);
+
+  for (var i = 0; i < list.length; i++) {
+    var f = list[i];
+    var type = types[f[2]];
+    // 形狀跟**名稱優先**嘅類別（見 facilityKind）。設施檔有 29 條
+    // 「…扶手電梯」被歸類做 lift，之前全部畫成一個藍色圓形 ——
+    // 即係用地圖話輪椅用戶「呢度有升降機」。名稱同類型矛盾時以名為準。
+    var kind = facilityKind(f, type);
+    if (kind === 'covered' && !drawCover[i]) continue;   // 同一個結構：已經畫過
+    // 雨天模式：有蓋通道標記放大 + 光暈
+    var big = S.rain && kind === 'covered';
+    var px = big ? 56 : 40;
+    // 輪椅／推車模式之下，扶手電梯係用唔到嘅設施 —— 標記劃斜線講明
+    var off = (kind === 'escalator' && S.wheel);
+
+    // 60px 點擊區包住圖形（圖形本身維持 40/56px，唔會被拉大）
+    var el = document.createElement('div');
+    el.className = 'fac-hit';
+    el.style.cssText = 'width:60px;height:60px;display:flex;align-items:center;' +
+      'justify-content:center;cursor:pointer;';
+    el.innerHTML = '<span style="display:block;width:' + px + 'px;height:' + px +
+      'px;' + (big ? 'filter:drop-shadow(0 0 10px var(--color-covered-glow));' : '') +
+      '">' + facilitySvg(kind, px, off) + '</span>';
+    el.setAttribute('aria-hidden', 'true');
+
+    (function (fac, tp, node) {
+      node.addEventListener('click', function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        onFacilityClick(fac, tp);
+      });
+    })(f, type, el);
+
+    var mk = new mapboxgl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([f[0], f[1]]).addTo(MAP);
+    MARKERS.push({ marker: mk, kind: kind, el: el, base: 40, f: f });
+  }
+}
+
+var routeLayerReady = false;
+function drawRoute(route) {
+  if (!MAP || !mapReady) return;
+  var coords = route.pts;
+  var geo = { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } };
+
+  try {
+    if (MAP.getSource('route')) {
+      MAP.getSource('route').setData(geo);
+    } else {
+      MAP.addSource('route', { type: 'geojson', data: geo });
+      // 白色底線提升對比，再疊深藍主線
+      MAP.addLayer({
+        id: 'route-casing', type: 'line', source: 'route',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#FFFFFF', 'line-width': 13 }
+      });
+      MAP.addLayer({
+        id: 'route-main', type: 'line', source: 'route',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#1A237E', 'line-width': 7 }
+      });
+      routeLayerReady = true;
+    }
+  } catch (e) { /* 圖層已存在 */ }
+
+  var b = new mapboxgl.LngLatBounds();
+  for (var i = 0; i < coords.length; i++) b.extend(coords[i]);
+  MAP.fitBounds(b, { padding: 60, duration: prefersReducedMotion() ? 0 : 600 });
+}
+
+function moveWalkerMarker(lng, lat) {
+  if (!MAP) return;
+  if (!moveWalkerMarker._mk) {
+    var el = document.createElement('div');
+    el.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" ' +
+      'width="52" height="52" ' +
+      'viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" ' +
+      'stroke-linecap="round"><circle cx="12" cy="4.6" r="2.6" fill="#fff"/>' +
+      '<path d="M12 7.4v6.2M12 13.6h5.2l2.6 6.4M12 13.6H6.8l-2.6 6.4"/>' +
+      '<path d="M12 13.6l-3.2 6.4M12 13.6l3.2 6.4"/></svg>';
+    el.style.cssText = 'width:52px;height:52px;background:#B71C1C;border:3px solid #fff;' +
+      'border-radius:50%;box-shadow:0 3px 12px rgba(0,0,0,.4);padding:2px;';
+    moveWalkerMarker._mk = new mapboxgl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([lng, lat]).addTo(MAP);
+  } else {
+    moveWalkerMarker._mk.setLngLat([lng, lat]);
+  }
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia &&
+         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/* ===== 10. 模擬步行 =====================================================
+   位置來源抽象化：walker 每 tick 前進「米」，唔係跳 vertex index。
+   位置連續推進 → 永遠唔會跳過觸發窗口。
+   日後換成 GPS provider 只需要換掉呢個物件。
+   ====================================================================== */
+
+var walker = {
+  // 由沿線距離 s 取經緯度
+  pointAt: function (route, s) {
+    var cum = route.cum, pts = route.pts, i;
+    if (s <= 0) return pts[0];
+    if (s >= route.total) return pts[pts.length - 1];
+    for (i = 0; i < cum.length - 1; i++) {
+      if (s >= cum[i] && s <= cum[i + 1]) {
+        var segLen = cum[i + 1] - cum[i];
+        var u = segLen > 0 ? (s - cum[i]) / segLen : 0;
+        return [
+          pts[i][0] + u * (pts[i + 1][0] - pts[i][0]),
+          pts[i][1] + u * (pts[i + 1][1] - pts[i][1])
+        ];
+      }
+    }
+    return pts[pts.length - 1];
+  },
+
+  /* begin：由頭開始（s = 0） */
+  begin: function (route, speed) {
+    S.walk = { s: 0, speed: speed, playing: false, timer: null,
+               route: route, arrived: false, introHold: false, holdMs: 0 };
+    this.run();
+  },
+
+  /* run：由目前 s 繼續。resume 一定要用呢個 ——
+     之前 resume 錯誤咁再叫 begin，會將位置重設返 0，
+     即係「暫停後再播」會由起點重新行過。 */
+  run: function () {
+    var w = S.walk;
+    if (!w || w.arrived) return;
+    w.playing = true;
+    if (w.timer) clearTimeout(w.timer);
+    w.timer = setTimeout(this._tick(), CONFIG.TICK_MS);
+  },
+
+  _tick: function () {
+    var self = this;
+    return function tick() {
+      var w = S.walk;
+      if (!w || !w.playing) return;
+
+      /* 升降機停留中：唔行、唔觸發，只係等。
+       *
+       * 呢個 counter 一定要放喺 tick 鏈裡面（而唔係自己一個 setTimeout）：
+       * tick 鏈係可以暫停嘅（pause 清 timer，resume 重新接上），游離嘅
+       * timer 會繞過暫停，用戶撳咗暫停個點仲會自己行落去。 */
+      if (w.holdMs > 0) {
+        w.holdMs -= CONFIG.TICK_MS;
+        if (w.holdMs > 0) { w.timer = setTimeout(tick, CONFIG.TICK_MS); return; }
+        w.holdMs = 0;
+      }
+
+      /* 減速總督：講緊嘢嘅時候行慢啲。
+       *
+       * 語音同位置一定要解耦（舊 app 就係 await 語音，先會漏轉向），
+       * 但完全唔理就會出現「一句未講完，下一個觸發窗已經到」。用戶明確
+       * 批准用減速換取語音唔打架 —— 而且長者行慢啲本身就更安全，
+       * 亦多啲時間準備轉向。冇語音時全速，所以唔會拖慢成程。 */
+      var step = w.speed * (S.speedMul || 1);
+      if (narrator.busy) {
+        /* 加速倍數喺呢度**一定要讓路**：講緊嘢嘅時候由總督話事。
+           所以 4 倍速係「兩句之間行快啲」，唔係「語音追唔上」——
+           用戶要求「語音也要跟得上」，呢個就係跟得上嘅保證。 */
+        step = Math.max(w.speed * CONFIG.SPEAK_SLOW, CONFIG.SPEAK_SLOW_MIN);
+      }
+      w.s += step * (CONFIG.TICK_MS / 1000);
+      if (w.s >= w.route.total) w.s = w.route.total;
+
+      var p = self.pointAt(w.route, w.s);
+      moveWalkerMarker(p[0], p[1]);
+
+      // 轉向／設施／地標觸發 —— 非阻塞，唔會等語音
+      checkTriggers(w.route, w.s);
+
+      /* 行到升降機邊 → 停 LIFT_HOLD_MS 模擬搭𨋢，並報一句。
+         兩個細節：
+          · 用 `w.s - lf.s` 嘅差距做保險：報告「此路不通」之後會由目前位置
+            重算路線，新路線可能有部𨋢喺**後面**，唔應該無啦啦停低重播
+            （實測報告改道會令呢個情況出現）。
+          · 只喺呢度做一次（lf.done），否則每一格都會再停五秒。 */
+      var lifts = w.route.lifts || [];
+      for (var li = 0; li < lifts.length; li++) {
+        var lf = lifts[li];
+        if (lf.done || w.s < lf.s) continue;
+        lf.done = true;
+        if (w.s - lf.s > 12) continue;
+        w.holdMs = CONFIG.LIFT_HOLD_MS;
+        /* 「埋身」嗰句由呢度講（轉向軌講 60 米同 20 米兩段）——
+           停低同旁白一定要係同一件事，所以兩樣喺同一個地方發生。
+           樓層名由**落腳點** zB 查（見 CONFIG.MALL_LEVELS）—— 唔係
+           「上就 zB、落就 zA」：zB 永遠係出𨋢嗰層。查唔到就淨講方向。 */
+        var lv = levelName(lf.zB);
+        narratorSay(lv
+          ? fmt(t('nLiftNowLevel'), { level: lv, uw: t(lf.dz >= 0 ? 'liftUpWord' : 'liftDownWord') })
+          : t(lf.dz >= 0 ? 'nLiftUp' : 'nLiftDown'), 3, 'lift' + li);
+      }
+
+      narratorDrain();                 // 補播之前被搶佔嘅提示
+      updateProgress(w.route, w.s);
+
+      if (w.s >= w.route.total && !w.arrived) {
+        w.arrived = true;
+        w.playing = false;
+        renderArrived(w.route);
+        // 到達一定要講得出，所以用最高優先級（4 > 轉向嘅 3）。
+        // 之前用 3，會同轉向提示同級而被丟棄，加上行完之後唔會再 tick，
+        // narratorDrain 亦冇機會補播 —— 結果到達提示永遠消失。
+        narratorSay(fmt(t('nArrive'), {
+          destination: t(S.routeKey === 'A' ? 'destA' : 'destB')
+        }), 4, 'arrive');
+        setPlayButton(true);
+        return;
+      }
+      w.timer = setTimeout(tick, CONFIG.TICK_MS);
+    };
+  },
+
+  pause: function () {
+    if (S.walk) {
+      S.walk.playing = false;
+      if (S.walk.timer) clearTimeout(S.walk.timer);
+    }
+  },
+
+  resume: function () {
+    if (!S.walk || S.walk.arrived) return;
+    this.run();
+  }
+};
+
+/* ===== 11. 介面 ======================================================== */
+
+function setText(id, val) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function applyI18n() {
+  document.documentElement.lang = (S.lang === 'en') ? 'en' : 'zh-HK';
+  setText('app-title', t('appTitle'));
+  setText('routes-label', t('pickDest'));
+  setText('route-A-name', t('routeA')); setText('route-A-sub', t('routeASub'));
+  setText('route-B-name', t('routeB')); setText('route-B-sub', t('routeBSub'));
+  setText('quality-title', t('qualityTitle'));
+  setText('q-len-label', t('distance')); setText('q-time-label', t('time'));
+  setText('q-stairs-label', t('stairs')); setText('q-slope-label', t('slope'));
+  setText('q-cover-label', t('cover')); setText('q-lift-label', t('lift'));
+  setText('btn-repeat-text', t('repeat'));
+  setText('btn-block-text', t('blocked'));
+  setText('btn-reset-text', t('reset'));
+  renderLegend();
+  updateWheelButton();
+  updateModeNote();
+  updateWeatherButton();
+  updatePlayButtonLabel();
+  updateSpeedButton();
+  renderReports();
+  document.getElementById('lang-zh').setAttribute('aria-pressed', String(S.lang === 'zh-HK'));
+  document.getElementById('lang-en').setAttribute('aria-pressed', String(S.lang === 'en'));
+
+  setText('credits', '');
+  var c = document.getElementById('credits');
+  // Open-Meteo 條款要求標明出處 —— 用咗佢就一定要寫。
+  c.innerHTML = (S.lang === 'en'
+    ? 'Data: HK Lands Dept 3D Pedestrian Network · <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a> (ODbL) · Weather: <a href="https://open-meteo.com/">Open-Meteo.com</a>'
+    : '資料：香港地政總署 3D 行人網絡 · <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap 貢獻者</a>（ODbL）· 天氣：<a href="https://open-meteo.com/">Open-Meteo.com</a>');
+
+  if (S.route) { renderQuality(S.route); drawRoute(S.route); }
+  else { setText('instr-text', t('readyStart')); setText('instr-sub', t('pickRoute')); }
+}
+
+/* 天氣狀態嘅唯一入口。
+ *
+ * 一定要收歸一處：S.rain 係 edgeCost() 讀嘅全域，而設施標記嘅大細／光暈
+ * 都跟住佢。之前 addFacilityMarkers() 只在 MAP.on('load') 叫過一次，所以
+ * 「雨天有蓋標記放大」由頭到尾冇生效過 —— 收埋喺呢度就順手修好。 */
+function setRain(v, source) {
+  S.rain = !!v;
+  if (source) S.weatherSource = source;
+  updateWeatherButton();
+  rebuildFacilityMarkers();
+}
+
+/* 圖例：五個形狀同地圖標記一一對應。
+ *
+ * 圖示由 facilitySvg() 產生，同地圖標記係同一個來源 —— 兩邊各寫一份
+ * SVG 嘅話，改咗一邊就會靜靜咁唔一致（呢個 codebase 反覆出現嘅同一類問題）。
+ * 文字跟語言，扶手電梯嗰項仲要跟輪椅模式：輪椅模式講明「唔適用」，
+ * 而且圖示同樣劃斜線，同地圖上嗰 29 個標記一致。 */
+function renderLegend() {
+  var ico = { 'lg-ico-lift': 'lift', 'lg-ico-ramp': 'ramp',
+              'lg-ico-covered': 'covered', 'lg-ico-escalator': 'escalator',
+              'lg-ico-blocked': 'blocked' };
+  for (var id in ico) {
+    if (!ico.hasOwnProperty(id)) continue;
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = facilitySvg(ico[id], 32, ico[id] === 'escalator' && S.wheel);
+  }
+  setText('lg-lift', t('lgLift'));
+  setText('lg-ramp', t('lgRamp'));
+  setText('lg-covered', t('lgCovered'));
+  setText('lg-escalator', t('lgEscalator') + ' ' + (S.wheel ? t('lgEscOff') : t('lgEscOn')));
+  setText('lg-blocked', t('lgBlocked'));
+}
+
+/* 質素卡上嘅模式一行。只講**模式嘅規則**，唔講「路線有冇變」——
+   用戶明確要求唔好講呢句，而且講咗亦幫唔到佢。 */
+function updateModeNote() {
+  setText('q-mode', S.wheel ? t('qModeWheel') : t('qModePlain'));
+}
+
+function updateWheelButton() {
+  var b = document.getElementById('btn-wheel');
+  if (!b) return;
+  b.setAttribute('aria-pressed', String(S.wheel));
+  setText('btn-wheel-text', S.wheel ? t('whOn') : t('whOff'));
+  b.setAttribute('aria-label', S.wheel ? t('whOnAria') : t('whOffAria'));
+}
+
+/* 輪椅／推車模式開關。
+ *
+ * 用戶帶住輪椅或者推車就揀「有」—— 扶手電梯用唔到，所以標記劃斜線、
+ * 語音唔講。冇帶就揀「冇」，扶手電梯照標照講。
+ *
+ * ⚠ 呢個開關**唔會改路線**（用戶今次明確只要求改圖標、語言、質素卡）。
+ * 而且改路線亦冇用，實測過：圖內扶手電梯邊只有 41 條、總長 257 米，
+ * 全部喺九龍塘站／又一城建築群內部；五個成本模型（硬排除／開放／
+ * 偏好 0.7／0.3／連樓梯都開放）行出嚟嘅節點序列**完全一樣**，
+ * 路線 A 639 米、路線 B 465 米，用到嘅扶手電梯都係 0 條。
+ * 由 1,200 個隨機目的地抽查，只有 1 個（0.1%）有槓桿，而且喺 z ≥ 40 米
+ * 嘅山坡上。所以「幫你規劃扶手電梯路線」係做唔到嘅事，唔可以扮。
+ */
+function setWheel(v) {
+  S.wheel = !!v;
+  rebuildFacilityMarkers();   // 29 個扶手電梯標記要加／除斜線
+  renderLegend();
+  updateWheelButton();
+  updateModeNote();
+  if (S.route) {
+    /* 旁述軌要重算：輪椅模式剔除扶手電梯，一般模式放行。
+       只重算旁述，唔重新規劃路線 —— 路線唔受呢個開關影響。 */
+    S.route.cues = selectCues(S.route.pts, S.route.cum, S.route.zs,
+                              S.route.path, S.route.facilities);
+  }
+}
+
+function updateWeatherButton() {
+  var b = document.getElementById('btn-weather');
+  b.setAttribute('aria-pressed', String(S.rain));
+  setText('btn-weather-text', S.rain ? t('rainy') : t('sunny'));
+  // 無障礙標籤要講清楚狀態點嚟 —— 用戶唔應該見到一個唔知邊度走出嚟嘅天氣
+  var why = S.weatherSource === 'auto' ? t('wxAuto')
+          : S.weatherSource === 'manual' ? t('wxManual') : '';
+  b.setAttribute('aria-label', (S.rain ? t('rainy') : t('sunny')) +
+                 (why ? '（' + why + '）' : ''));
+}
+
+function setPlayButton(stopped) {
+  var b = document.getElementById('btn-play');
+  var play = '<svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>';
+  var pause = '<svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="6.5" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.3" y="5" width="4.2" height="14" rx="1.2"/></svg>';
+  var playing = S.walk && S.walk.playing && !S.walk.arrived;
+  b.innerHTML = (playing ? pause : play) + '<span id="btn-play-text">' +
+    (playing ? t('pause') : (S.walk && S.walk.s > 0 && !S.walk.arrived ? t('resume') : t('start'))) +
+    '</span>';
+}
+
+function updatePlayButtonLabel() { setPlayButton(false); }
+
+function renderQuality(route) {
+  document.getElementById('quality').hidden = false;
+  var st = route.stats;
+  updateModeNote();
+
+  setText('q-len', Math.round(st.length) + ' ' + t('meters'));
+  setText('q-time', estMinutes(route) + ' ' + t('minutes'));
+
+  var totalStairs = st.stairs + st.escalator;
+  setText('q-stairs', String(totalStairs));
+  document.getElementById('q-stairs-box').className =
+    'q-item ' + (totalStairs === 0 ? 'q-good' : 'q-bad');
+
+  /* 坡度唔用顏色標示。綠／紅會斷言「達標／唔達標」，但政府數據分唔開
+     陡斜路同冇名樓梯（見 CONFIG.SLOPE_CLAMPED），我哋冇資格咁斷言。
+     所以如實列出數字，唔加判斷。 */
+  var slopePct = Math.round(st.maxUp * 100);
+  setText('q-slope', slopePct + '%');
+  document.getElementById('q-slope-box').className = 'q-item';
+
+  setText('q-cover', Math.round(st.coveredPct) + '%');
+  document.getElementById('q-cover-box').className =
+    'q-item ' + (st.coveredPct >= 50 ? 'q-good' : '');
+
+  setText('q-lift', String(st.lift));
+
+  // 對照最短路線 —— 用嚟顯示「普通導航會點行」
+  var alt = computeShortest(route);
+  if (alt) {
+    /* 對照行唔再印坡度。兩條路線通常會用到同一段斜路，印出同一個數字
+       只會令對照顯得冇意思；呢張卡嘅重點係「普通導航會叫你行樓梯」。 */
+    setText('q-compare', fmt(t('cmp'), {
+      len: Math.round(alt.stats.length),
+      stairs: alt.stats.stairs + alt.stats.escalator
+    }));
+    var avoided = (alt.stats.stairs + alt.stats.escalator) - totalStairs;
+    if (avoided > 0) {
+      document.getElementById('q-compare').textContent += ' · ' +
+        fmt(t('cmpOk'), { n: avoided });
+    }
+  }
+
+  // 誠實警告 —— 唔可以扮到條條路都無障礙
+  var warns = [];
+  /* 坡度只作中性陳述，唔再當成警告。原因同上面嘅顏色決定一樣：個數字
+     唔夠可信去叫用戶「小心」或者「考慮他人協助」。 */
+  if (st.maxUp > CONFIG.STEEP_WARN) {
+    warns.push(fmt(t('wSteep'), { p: slopePct }));
+  }
+  if (totalStairs > 0) warns.push(t('wStairs'));
+  /* 雨天誠實指標。
+   * 實測：路線 B 嘅有蓋比例喺權重 0.6/3.0 至 0.15/20 之間全部飽和喺 10.8%
+   * —— 即係「有蓋 10.8%」唔係因為權重唔夠力，而係實際有蓋路段就係咁少。
+   * 所以唔可以扮「雨天路線幫你避晒雨」，要如實講出仲有幾多米露天。 */
+  if (S.rain && st.coveredPct < 40) {
+    warns.push(fmt(t('wOpenAir'), { m: Math.round(st.length - st.coveredLen) }));
+  }
+  setText('q-warn', warns.join(' '));
+}
+
+function estMinutes(route) {
+  var speed = (S.routeKey === 'A') ? CONFIG.WHEEL_SPEED : CONFIG.ELDER_SPEED;
+  return Math.max(1, Math.round(route.total / speed / 60));
+}
+
+function computeShortest(route) {
+  var s = nearestNode(POIS[ORIGIN].lng, POIS[ORIGIN].lat).idx;
+  var g = nearestNode(POIS[PRESETS[S.routeKey].to].lng,
+                      POIS[PRESETS[S.routeKey].to].lat).idx;
+  var p = astar(s, g, true, false);
+  return p ? buildStatsOnly(p) : null;
+}
+
+/* 唔建完整路線，只要統計 */
+function buildStatsOnly(path) {
+  var st = { length: 0, stairs: 0, escalator: 0, lift: 0, coveredLen: 0,
+             steepLen: 0, maxUp: 0, maxDown: 0, coveredPct: 0 };
+  for (var i = 0; i < path.length - 1; i++) {
+    var ei = edgeBetween(path[i], path[i + 1]);
+    if (ei < 0) continue;
+    var e = GRAPH.edges[ei];
+    st.length += e[2];
+    if (e[4] & F.STAIRS) st.stairs++;
+    if (e[4] & F.ESCALATOR) st.escalator++;
+    if (e[4] & F.LIFT) st.lift++;
+    if (e[4] & F.COVERED) st.coveredLen += e[2];
+    if (e[3] > 0.005 && e[3] < CONFIG.SLOPE_CLAMPED) st.maxUp = Math.max(st.maxUp, e[3]);
+    else if (e[3] < -0.005 && e[3] > -CONFIG.SLOPE_CLAMPED) st.maxDown = Math.max(st.maxDown, -e[3]);
+  }
+  st.coveredPct = st.length > 0 ? 100 * st.coveredLen / st.length : 0;
+  return { stats: st };
+}
+
+var ARROW_PATHS = {
+  straight:      'M24 42V14M13 25L24 14l11 11',
+  left:          'M24 42V16M24 16h-9M24 16l-8 8M24 16l-8-8',
+  right:         'M24 42V16M24 16h9M24 16l8 8M24 16l8-8',
+  'slight-left': 'M16 42l6-24M22 18l-8-2M22 18l-3-8',
+  'slight-right':'M32 42l-6-24M26 18l8-2M26 18l3-8',
+  uturn:         'M34 42V20a8 8 0 00-16 0v6M18 26l-5 6 5 6',
+  /* 升降機：車廂外框 + 一上一落兩支箭嘴。同設施圖標一樣用形狀區分，
+     唔用 emoji（設計硬要求）。 */
+  lift:          'M13 8h22v32H13zM14 19h20M19.5 32V20M16 23.5L19.5 20l3.5 3.5'
+                 + 'M28.5 16v12M25 24.5l3.5 3.5 3.5-3.5',
+  arrive:        'M24 6a9 9 0 100 18 9 9 0 000-18M20 15l3 3 6-6'
+};
+
+function renderTurn(dir, text, sub, warn) {
+  var a = document.getElementById('turn-arrow');
+  if (a) a.innerHTML = '<path d="' + (ARROW_PATHS[dir] || ARROW_PATHS.straight) + '"/>';
+  setText('instr-text', text);
+  setText('instr-sub', sub || '');
+  var w = document.getElementById('instr-warn');
+  if (warn) { w.textContent = warn; w.className = 'on'; }
+  else { w.textContent = ''; w.className = ''; }
+}
+
+/* 目前應該做嘅轉向 */
+function currentManeuver(route, s) {
+  for (var i = 0; i < route.maneuvers.length; i++) {
+    var m = route.maneuvers[i];
+    if (s < m.s + 12) return m;
+  }
+  return null;
+}
+
+function updateProgress(route, s) {
+  var remain = Math.max(0, route.total - s);
+  setText('prog-text', Math.round(remain) + ' ' + t('meters'));
+  var mins = Math.max(1, Math.round(remain /
+    ((S.routeKey === 'A') ? CONFIG.WHEEL_SPEED : CONFIG.ELDER_SPEED) / 60));
+  setText('prog-sub', t('minutes') + ' ' + mins);
+  var pct = route.total > 0 ? Math.min(100, 100 * s / route.total) : 0;
+  document.getElementById('bar-fill').style.width = pct + '%';
+
+  var m = currentManeuver(route, s);
+  if (m) {
+    var dirWord = t(m.dir === 'left' ? 'turnLeft'
+                  : m.dir === 'right' ? 'turnRight'
+                  : m.dir === 'slight-left' ? 'slightLeft'
+                  : m.dir === 'slight-right' ? 'slightRight'
+                  : m.dir === 'lift' ? 'liftWord' : 'uTurn');
+    var distToTurn = Math.max(0, m.s - s);
+    /* 警告行只留俾「呢條路真係有樓梯」。
+       以前呢度係出全 route 最斜一段，但（一）嗰個數字唔可信（見
+       CONFIG.SLOPE_CLAMPED），（二）佢係路線整體嘅資料，屬於質素卡；
+       置頂卡嘅職責係「下一個動作係咩」。樓梯唔同 —— 佢係即刻、
+       喺你面前嘅危險，而且用戶可能已經捲離咗質素卡，所以一定要 pin 住。 */
+    var stairsHere = route.stats.stairs + route.stats.escalator;
+    renderTurn(m.dir, dirWord,
+      distToTurn > 3 ? (Math.round(distToTurn) + ' ' + t('meters') + ' · ' + t('thenTurn'))
+                     : t('thenTurn'),
+      stairsHere > 0 ? t('wStairs') : '');
+  } else {
+    renderTurn('straight', t('straight'),
+      Math.round(remain) + ' ' + t('meters'),
+      (route.stats.stairs + route.stats.escalator) > 0 ? t('wStairs') : '');
+  }
+}
+
+function renderArrived(route) {
+  renderTurn('arrive', t('arrive'), t('arriveSub'), '');
+  setText('prog-text', '0 ' + t('meters'));
+  setText('prog-sub', '');
+  document.getElementById('bar-fill').style.width = '100%';
+}
+
+var toastTimer = null;
+function showToast(msg) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'on';
+  // 存起 handle —— 否則 3 秒內第二個 toast 會被第一個嘅 timer 截斷
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.className = ''; }, 4000);
+}
+
+/* ===== 12. 事件與啟動 ================================================== */
+
+/* 規劃路線，順便處理「一定要搭呢條升降機」（見 PRESETS.A.via）。
+ *
+ * 兩段獨立 A* 再縫埋 —— 唔可以當佢係一個中途點：升降機邊嘅兩個落腳點
+ * 平面距離只有 0.11 米，當中途點規劃＝同一個位置入同一個位置出，等於冇
+ * 夾過（router 會若無其事咁行返原本嗰條路）。
+ *
+ * **唔可以 slice(1)。** 呢個 bug 真係踩過：寫 `p1.concat(p2.slice(1))` 係
+ * 假設兩段共用接駁節點，但呢度 p1 尾（下層 12351）同 p2 頭（上層 10763）
+ * 係兩個唔同節點，slice 會將升降機上層落腳點掉走，之後成條路線量出嚟
+ * 「升降機 0 次」，而 buildRoute 又會補一條 0 米假邊遮住個缺口 ——
+ * 冇錯誤、只有錯數字。 */
+function planVia(s, g, via) {
+  if (!via) return null;
+  var ei = edgeBetween(via.lo, via.hi);
+  var e = (ei >= 0) ? GRAPH.edges[ei] : null;
+  /* 一定要驗證真係升降機邊。數據一旦改動、或有人改錯節點編號，
+     就會靜靜咁變成「搭咗一部唔存在嘅𨋢」—— 呢個 App 唔可以出呢種錯。 */
+  if (!e || !(e[4] & F.LIFT)) return null;
+  var p1 = astar(s, via.lo, false, false);
+  var p2 = astar(via.hi, g, false, false);
+  if (!p1 || !p2) return null;
+  return p1.concat(p2);
+}
+
+/* 回傳 { path, via }。via=false 代表「照舊行普通最短路」，唔係錯誤。 */
+function planPath(s, g, key) {
+  var via = PRESETS[key] ? PRESETS[key].via : null;
+  var p = planVia(s, g, via);
+  if (p) return { path: p, via: true };
+  return { path: astar(s, g, false, false), via: false };
+}
+
+function startRoute(key) {
+  if (!GRAPH) { showToast(t('dataFail')); return; }
+  S.routeKey = key;
+  // S.blocked / S.reports 唔喺呢度清。
+  // 用戶報告過「呢度唔通」就係一個事實，唔會因為佢轉語言或者轉天氣而消失。
+  // 只有「重新開始」才清（見 btn-reset）。
+  narratorCancel();
+
+  /* 天氣權重一定要喺 astar() **之前** 設好。
+     edgeCost() 讀 S.rain，所以放喺計路之後就等於冇改過 ——
+     呢個正係原本「雨天路線其實用晴天權重」嘅成因。
+     但用戶手動撳過天氣掣就永遠以用戶為準：唔可以行到一半自己轉返。 */
+  if (!S.weatherManual) setRain(PRESETS[key].rain, S.weatherSource || 'preset');
+
+  var toKey = PRESETS[key].to;
+  var s = nearestNode(POIS[ORIGIN].lng, POIS[ORIGIN].lat).idx;
+  var g = nearestNode(POIS[toKey].lng, POIS[toKey].lat).idx;
+
+  var plan = planPath(s, g, key);
+  var path = plan.path;
+  var relaxed = false;
+  if (!path) {
+    // 硬排除下冇路 —— 放寬並明確告知（放寬嗰條唔夾 via：有路要緊）
+    path = astar(s, g, false, true);
+    relaxed = true;
+  }
+  if (!path) { showToast(t('noRoute')); return; }
+
+  S.route = buildRoute(path, key);
+  S.route.relaxed = relaxed;
+  /* 記錄「有冇搭到指定嗰部𨋢」。planVia 失敗會靜靜咁退回普通 A*，
+     呢個旗標就係分辨兩者嘅唯一方法（質素卡唔會攞嚟講，但測試同
+     將來嘅除錯要靠佢）。 */
+  S.route.viaLift = plan.via;
+
+  document.getElementById('route-A').setAttribute('aria-pressed', String(key === 'A'));
+  document.getElementById('route-B').setAttribute('aria-pressed', String(key === 'B'));
+
+  renderQuality(S.route);
+  drawRoute(S.route);
+  updateProgress(S.route, 0);
+
+  /* 有咗路線，有蓋標記嘅「同一組只畫一個」就可以揀最近用戶嗰個
+     （見 coveredDrawSet）。呢個係唯一一次重畫，唔會隨住行路跳嚟跳去。 */
+  rebuildFacilityMarkers();
+
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-block').disabled = false;
+
+  var speed = (key === 'A') ? CONFIG.WHEEL_SPEED : CONFIG.ELDER_SPEED;
+
+  /* 先講開場白，講完（或等夠上限）才起步 —— 見 beginAfterIntro。
+     順序一定要係「先講、後排隊起步」：narratorSay 會同步設 narrator.busy，
+     beginAfterIntro 嘅輪詢就係靠呢個 flag 判斷講完未。
+
+     按路線長短調整（用戶要求）：短線唔需要聽「約 X 分鐘」，開場白越長越
+     容易同第一個轉向提示撞。長短兩句都保留「慢慢嚟」嘅關心。 */
+  var intro = (S.route.total < CONFIG.SHORT_ROUTE_M)
+    ? fmt(t('nStartShort'), { d: Math.round(S.route.total) })
+    : fmt(t('nStart'), { d: Math.round(S.route.total), t: estMinutes(S.route) });
+  narratorSay(intro, 3, 'start');
+  beginAfterIntro(S.route, speed);
+
+  if (relaxed) showToast(t('wStairs'));
+}
+
+/* 開場白講完先起步。
+ *
+ * 用戶報「開始全程多少米還沒説完就被下一句話打斷」。轉向提示一句都不能
+ * 刪，所以呢度用「等」而唔係用「刪」嚟解決衝突：路線 A 得 639 米／約 11
+ * 分鐘，等幾秒零成本，但可以直接消除症狀。
+ *
+ * 一定要有上限 —— 就算語音壞咗完全冇 onend，最多等 INTRO_WAIT_MAX_MS
+ * 都要起步，唔可以因為語音而令導航完全唔行。
+ * 用遞迴 setTimeout 而唔用 setInterval：harness 只 stub 咗 setTimeout。 */
+function beginAfterIntro(route, speed) {
+  walker.begin(route, speed);
+  walker.pause();                    // playing = false，等開場白
+  var w = S.walk;
+  w.introHold = true;
+  setPlayButton(false);
+
+  var waited = 0;
+  function waitIntro() {
+    waited += 120;
+    if (waited < CONFIG.INTRO_WAIT_MAX_MS && narrator.busy) {
+      setTimeout(waitIntro, 120);
+      return;
+    }
+    w.introHold = false;
+    // 用戶可能已經轉咗路線或者撳咗暫停，兩者都唔應該被呢度強行起步
+    if (S.walk === w && !w.arrived && !w.playing) walker.resume();
+  }
+  setTimeout(waitIntro, 120);
+}
+
+function togglePlay() {
+  if (!S.walk) return;
+  if (S.walk.arrived) { startRoute(S.routeKey); return; }
+  if (S.walk.introHold) {
+    // 用戶自己撳掣，就唔再等開場白 —— 主導權喺用戶手上
+    S.walk.introHold = false;
+    walker.resume();
+    setPlayButton(false);
+    return;
+  }
+  if (S.walk.playing) {
+    walker.pause();
+    setPlayButton(true);
+    /* 語音都要一齊停 —— 「暫停」對用戶嚟講就係「而家唔想聽到嘢」，
+       淨係凍結個點而任由旁白講落去，係掣壞咗嘅感覺。
+       只有真係有句講緊（narrator.busy）才設 suspended：
+       冇句子就冇嘢好停，亦唔應該無謂咁將 speechSynthesis 設成 paused。 */
+    if (narrator.busy) {
+      narrator.suspended = true;
+      pauseSpeech();
+    }
+  } else {
+    walker.resume();
+    setPlayButton(false);
+    if (narrator.suspended) {
+      narrator.suspended = false;
+      resumeSpeech();
+      /* 暫停期間句子有可能自己播完（onend 照樣會嚟到，finish() 見到
+         suspended 就唔補播下一句）。所以恢復嗰陣要自己補返一次，
+         否則嗰句被搶佔嘅提示就永遠消失。 */
+      narratorDrain();
+    }
+  }
+}
+
+/* 「速度」掣：1 → 2 → 4 → 1（見 CONFIG.SPEED_STEPS）。
+ *
+ * 只改「兩句旁白之間行幾快」：講緊嘢嘅時候減速總督照樣接手（見 §10），
+ * 所以語音永遠跟得上，唔會出現「4 倍速就聽唔到提示」。亦唔會重新規劃
+ * 路線、唔會改語音長度。 */
+function cycleSpeed() {
+  var steps = CONFIG.SPEED_STEPS;
+  var i = steps.indexOf(S.speedMul);
+  if (i < 0) i = -1;                       // 值唔喺清單（例如舊 localStorage）→ 返常速
+  S.speedMul = steps[(i + 1) % steps.length];
+  updateSpeedButton();
+}
+
+var SPEED_ICON =
+  '<svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">' +
+  '<path d="M3 6.2v11.6l8.4-5.8z"/><path d="M12.6 6.2v11.6L21 12z"/></svg>';
+
+/* 掣面文字同 aria-label 都出倍數 —— 淨係寫「1×」對長者用戶唔清楚，
+   而低視力用戶要用放大鏡睇，所以「速度」兩個字一定要喺掣面。 */
+function updateSpeedButton() {
+  var b = document.getElementById('btn-speed');
+  if (!b) return;
+  var n = S.speedMul || 1;
+  b.innerHTML = SPEED_ICON + '<span id="btn-speed-text">' + t('speed') + ' ' + n + '×</span>';
+  b.setAttribute('aria-label', fmt(t('speedAria'), { n: n }));
+}
+
+/* 「報告此路不通」。
+ *
+ * 用戶選咗「落標記 ＋ 自動改道 ＋ 面板報告清單」。三樣都要做齊：
+ *   1. 喺報告位置落一個**持久**標記（紅色菱形 ＋ 白色「!」）——
+ *      形狀同圓／三角／方都唔同，配合顏色雙重編碼。標記唔會因為改道而消失，
+ *      佢係一個事實陳述。aria-hidden：236 個裝飾標記已經唔讀，唔可以加一個
+ *      要讀嘅落去；內容經面板清單同語音傳達。
+ *   2. 記錄落 S.reports（位置、沿線距離、時間），面板列清單。
+ *   3. 保留原本嘅自動改道 —— 用戶明確揀咗要自動重算。
+ */
+var REPORT_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" viewBox="0 0 32 32">' +
+  '<path d="M16 2.5L29.5 16 16 29.5 2.5 16z" fill="#B71C1C" stroke="#fff" stroke-width="3"/>' +
+  '<path d="M16 9.5v8.5" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>' +
+  '<circle cx="16" cy="23" r="2.1" fill="#fff"/></svg>';
+
+var REPORT_MARKERS = [];
+
+function addReportMarker(lng, lat) {
+  if (!MAP || !window.mapboxgl) return;
+  var el = document.createElement('div');
+  el.setAttribute('aria-hidden', 'true');
+  el.style.cssText = 'width:44px;height:44px;';
+  el.innerHTML = REPORT_ICON;
+  var mk = new mapboxgl.Marker({ element: el, anchor: 'center' })
+    .setLngLat([lng, lat]).addTo(MAP);
+  REPORT_MARKERS.push(mk);
+}
+
+function clearReportMarkers() {
+  for (var i = 0; i < REPORT_MARKERS.length; i++) {
+    if (REPORT_MARKERS[i] && REPORT_MARKERS[i].remove) REPORT_MARKERS[i].remove();
+  }
+  REPORT_MARKERS = [];
+}
+
+function nowHM() {
+  var d = new Date();
+  function p(n) { return (n < 10 ? '0' : '') + n; }
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function renderReports() {
+  var card = document.getElementById('report-card');
+  var list = document.getElementById('report-list');
+  if (!card || !list) return;
+  if (!S.reports.length) {
+    card.hidden = true;
+    setText('report-title', '');
+    return;
+  }
+  card.hidden = false;
+  setText('report-title', fmt(t('reportTitle'), { n: S.reports.length }));
+
+  // 清空再重建（語言切換時要跟住轉）
+  while (list.firstChild) list.removeChild(list.firstChild);
+  for (var i = 0; i < S.reports.length; i++) {
+    var r = S.reports[i];
+    var li = document.createElement('li');
+    li.innerHTML = REPORT_ICON;         // 固定字串，唔含任何資料
+    var sp = document.createElement('span');
+    sp.textContent = fmt(t('reportItem'), { m: Math.round(r.s), time: r.time });
+    li.appendChild(sp);
+    list.appendChild(li);
+  }
+}
+
+function reportBlocked() {
+  if (!S.route || !S.walk) return;
+  var at = Math.min(S.route.total, S.walk.s + 25);   // 前面約 25m
+  var p = walker.pointAt(S.route, at);
+  var n = nearestNode(p[0], p[1]);
+  var list = ADJ[n.idx] || [];
+  var added = 0;
+  for (var i = 0; i < list.length && added < 3; i++) {
+    var e = GRAPH.edges[list[i]];
+    S.blocked.push([e[0], e[1]]);
+    added++;
+  }
+
+  S.reports.push({ lng: p[0], lat: p[1], s: at, time: nowHM() });
+  addReportMarker(p[0], p[1]);
+  renderReports();
+
+  var keep = S.walk.s;
+  var toKey = PRESETS[S.routeKey].to;
+  var g = nearestNode(POIS[toKey].lng, POIS[toKey].lat).idx;
+  var from = nearestNode(walker.pointAt(S.route, keep)[0],
+                         walker.pointAt(S.route, keep)[1]).idx;
+
+  var path = astar(from, g, false, false) || astar(from, g, false, true);
+  if (!path) { showToast(t('noRoute')); return; }
+  /* 呢度**唔夾** PRESETS 嘅 via：改道係由目前位置出發，硬要繞去搭嗰部𨋢
+     可能要多行幾百米先返到嚟，甚至根本冇路。改道嘅目標係「避開障礙」，
+     唔係「維持示範效果」—— 所以照行普通最短路。 */
+
+  walker.pause();
+  S.route = buildRoute(path, S.routeKey);
+  // 新路徑由「目前位置」開始，所以 s 由 0 起係正確嘅
+  renderQuality(S.route);
+  drawRoute(S.route);
+  rebuildFacilityMarkers();   // 改咗路，有蓋標記嘅代表點跟住換（見 coveredDrawSet）
+  walker.begin(S.route, S.routeKey === 'A' ? CONFIG.WHEEL_SPEED : CONFIG.ELDER_SPEED);
+  setPlayButton(false);
+  // 一句講齊「記低咗」同「幫你避開」——唔好拆兩句同等優先級，
+  // 單槽旁白器會丟棄第二句（同等優先級唔會搶）。
+  narratorSay(t('nReport'), 3, 'report');
+  showToast(t('blockedDone'));
+}
+
+function setLang(lang) {
+  if (S.lang === lang) return;
+  S.lang = lang;
+  try { localStorage.setItem('a11y-lang', lang); } catch (e) {}
+  applyI18n();
+
+  // 語音可用性檢查 —— 唔可以靜靜轉語言
+  if (lang === 'zh-HK') {
+    loadVoices();
+    var has = false, i;
+    for (i = 0; i < VOICES.length; i++) {
+      if ((VOICES[i].lang || '').toLowerCase().indexOf('zh') === 0 ||
+          (VOICES[i].lang || '').toLowerCase().indexOf('yue') === 0) { has = true; break; }
+    }
+    if (VOICES.length && !has) showToast(t('noVoice'));
+  }
+
+  if (S.route) {
+    // 重建路線以更新地標顯示名同左右
+    startRoute(S.routeKey);
+  }
+}
+
+/* 即時天氣（Open-Meteo，免費、無 key、開放 CORS）。
+ *
+ * 用戶要求「天氣狀況根據當天情況自動調整」。三個約束：
+ *   1. 用戶手動撳過天氣掣 → 永遠以用戶為準，唔覆寫（S.weatherManual）。
+ *      已經揀咗路線都唔覆寫 —— 行到一半自己轉天氣比唔自動更差。
+ *   2. **失敗要靜靜咁算**。離線、被防火牆擋、API 改版都係正常狀態，
+ *      唔應該彈錯誤訊息嚇用家。預設晴天繼續行。
+ *   3. 4 秒逾時。老人家唔會為咗「今日落唔落雨」等一個網絡請求。
+ *
+ * 沙盒（node harness）冇 fetch / AbortController，所以每個呼叫點都要守衛。
+ */
+var WX_URL = 'https://api.open-meteo.com/v1/forecast?latitude=22.3370&longitude=114.1760' +
+             '&current=precipitation,rain,weather_code&timezone=Asia%2FHong_Kong';
+
+function wxIsRainy(cur) {
+  if (cur.precipitation > 0 || cur.rain > 0) return true;
+  // WMO weather code：51–67 毛毛雨／雨，80–82 陣雨，95–99 雷暴
+  var c = cur.weather_code;
+  return (c >= 51 && c <= 67) || (c >= 80 && c <= 82) || (c >= 95);
+}
+
+function fetchWeather() {
+  if (S.weatherManual || S.route) return;
+  if (typeof fetch !== 'function') return;
+
+  var opts = {};
+  var ctrl = null;
+  if (typeof AbortController === 'function') {
+    ctrl = new AbortController();
+    opts.signal = ctrl.signal;
+    setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 4000);
+  }
+
+  fetch(WX_URL, opts)
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      // 期間用戶可能已經自己撳咗天氣掣或者揀咗路線 —— 兩者都唔可以覆寫
+      if (S.weatherManual || S.route || !d || !d.current) return;
+      setRain(wxIsRainy(d.current), 'auto');
+    })
+    .catch(function () { /* 靜靜咁算：離線係正常狀態 */ });
+}
+
+function toggleWeather() {
+  // 手動撳過之後永遠以用戶為準：preset 同自動偵測都唔再覆寫（見 startRoute）
+  S.weatherManual = true;
+  setRain(!S.rain, 'manual');
+  if (S.route) startRoute(S.routeKey);
+}
+
+/* 輪椅／推車開關。唔重新規劃路線（見 setWheel）—— 所以行緊都可以撳，
+   唔會將行到一半嘅路程歸零。 */
+function toggleWheel() {
+  setWheel(!S.wheel);
+}
+
+function repeatLast() {
+  if (!S.lastSpoken) { showToast(t('nRepeatNone')); return; }
+  narratorCancel();
+  narratorSay(S.lastSpoken, 3, 'repeat');
+}
+
+function init() {
+  if (!initGraph()) {
+    showToast(t('dataFail'));
+    setText('instr-text', t('dataFail'));
+    return;
+  }
+  try {
+    var saved = localStorage.getItem('a11y-lang');
+    if (saved === 'en' || saved === 'zh-HK') S.lang = saved;
+  } catch (e) {}
+
+  applyI18n();
+  initMap();
+  fetchWeather();          // 非阻塞、失敗即靜靜咁算（見 fetchWeather）
+
+  document.getElementById('lang-zh').addEventListener('click', function () { setLang('zh-HK'); });
+  document.getElementById('lang-en').addEventListener('click', function () { setLang('en'); });
+  document.getElementById('route-A').addEventListener('click', function () { startRoute('A'); });
+  document.getElementById('route-B').addEventListener('click', function () { startRoute('B'); });
+  document.getElementById('btn-play').addEventListener('click', togglePlay);
+  document.getElementById('btn-repeat').addEventListener('click', repeatLast);
+  document.getElementById('btn-weather').addEventListener('click', toggleWeather);
+  document.getElementById('btn-wheel').addEventListener('click', toggleWheel);
+  document.getElementById('btn-speed').addEventListener('click', cycleSpeed);
+  // 首屏：圖例同開關都要有正確狀態（唔可以等用戶撳一下先同步）
+  renderLegend();
+  updateWheelButton();
+  updateModeNote();
+  document.getElementById('btn-block').addEventListener('click', reportBlocked);
+  document.getElementById('btn-reset').addEventListener('click', function () {
+    narratorCancel();
+    if (S.walk && S.walk.timer) clearTimeout(S.walk.timer);
+    S.walk = null; S.route = null; S.routeKey = null;
+    // 只有「重新開始」才清空報告 —— 報告係用戶講過嘅事實
+    S.blocked = []; S.reports = [];
+    clearReportMarkers();
+    renderReports();
+    document.getElementById('quality').hidden = true;
+    document.getElementById('btn-play').disabled = true;
+    document.getElementById('btn-block').disabled = true;
+    document.getElementById('route-A').setAttribute('aria-pressed', 'false');
+    document.getElementById('route-B').setAttribute('aria-pressed', 'false');
+    setPlayButton(true);
+    renderTurn('straight', t('readyStart'), t('pickRoute'), '');
+    setText('prog-text', '–'); setText('prog-sub', '');
+    document.getElementById('bar-fill').style.width = '0%';
+  });
+}
+
+/* 地圖高度而家跟視窗（clamp + 100dvh），所以視窗一變就要叫 Mapbox 重新度位。
+   以前完全冇 resize 監聽：地圖高度一樣會隨視窗變，但 Mapbox 快取咗尺寸，
+   於是 canvas 同容器對唔上。手機工具列收放亦會觸發呢個。 */
+if (window.addEventListener) {
+  var _rzTimer = null;
+  window.addEventListener('resize', function () {
+    if (_rzTimer) clearTimeout(_rzTimer);
+    _rzTimer = setTimeout(function () {
+      _rzTimer = null;
+      if (MAP && typeof MAP.resize === 'function') {
+        try { MAP.resize(); } catch (e) {}
+      }
+    }, 150);
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+})();
+</script>
+</body>
+</html>
