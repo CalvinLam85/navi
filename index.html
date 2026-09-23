@@ -321,6 +321,20 @@ h1 svg{flex:none}
 .q-good .q-value{color:var(--color-ok)}
 .q-note{font-size:var(--fs-small);font-weight:600;margin-top:10px;color:var(--color-ink-soft)}
 
+/* AI 路線摘要。同旁邊啲 .q-note 一樣字級（≥24px 地板），但多一條左邊粗線
+   同一塊底色 —— 區分係靠**結構**（左邊條線）而唔係淨靠顏色，同全份文件
+   一貫做法一致。標籤寫明係機器生成，唔會扮成人手寫。
+   對比：--color-ink #1A1A1A 落 --color-primary-soft #E8EAF6（實測見 probe）。 */
+.q-ai{
+  margin-top:14px;padding:12px 14px;background:var(--color-primary-soft);
+  border-left:6px solid var(--color-primary);border-radius:var(--radius-sm);
+}
+.q-ai-label{font-size:var(--fs-small);font-weight:800;color:var(--color-primary)}
+.q-ai-text{
+  font-size:var(--fs-small);font-weight:600;color:var(--color-ink);
+  margin-top:6px;line-height:1.6;
+}
+
 /* ---------- 圖例 ---------- */
 .legend{display:flex;flex-wrap:wrap;gap:12px 20px;margin-top:6px}
 .legend-item{display:flex;align-items:center;gap:10px;font-size:var(--fs-small);font-weight:700}
@@ -443,6 +457,13 @@ h1 svg{flex:none}
       <div class="q-note" id="q-mode"></div>
       <div class="q-note" id="q-compare"></div>
       <div class="q-note" id="q-warn"></div>
+      <!-- AI 路線摘要。文字喺建置時預先產生（出貨檔案唔含任何密鑰），
+           內容淨係描述上面嗰批數字。冇摘要就整塊唔顯示 —— 質素卡其餘
+           部分（包括所有誠實警告）唔受影響。 -->
+      <div class="q-ai" id="q-ai" hidden>
+        <div class="q-ai-label" id="q-ai-label"></div>
+        <div class="q-ai-text" id="q-ai-text"></div>
+      </div>
     </div>
 
     <!-- 已報告嘅「此路不通」清單。清單用文字＋形狀圖示，
@@ -739,6 +760,35 @@ var POIS = {
   mallUp: { lng: 114.17455, lat: 22.33742 }
 };
 
+/* ===== 1b. 路線摘要（建置時產生，唔好手改）=============================
+ *
+ * 由 `scripts/build_summaries.py` 寫入，輸入係**已經計好嘅路線數字** ——
+ * 同質素卡上面顯示嗰批一模一樣（腳本會將卡片當時嘅文字一齊交俾模型）。
+ * 模型只負責用淺白語言講解，唔會產生任何導航指令：建置腳本逐項驗證，
+ * 一出現「轉左／轉右／掉頭／前面 N 米」或者任何數據冇出現過嘅數字，
+ * 嗰句就即刻被拒收、重試，重試都唔得就留空。用戶定嘅硬規矩 ——
+ * 模型只描述，唔出指令 —— 係**驗證**出嚟嘅，唔係靠提示詞求返嚟。
+ *
+ * Key 係 `路線|天氣|語言`，例如 `A|dry|zh-HK`。搵唔到 key 就整塊唔顯示，
+ * 質素卡其餘部分完全唔受影響。
+ *
+ * ⚠ 呢個區塊由下面兩個標記夾住。生成器靠標記定位，搵唔到就會大聲失敗
+ *   （唔會靜靜咁當成功）—— 改標記名之前請先改埋腳本。
+ */
+// @@SUM_START@@
+var KT_SUMMARIES = {
+  "A|dry|en": "This route runs 697 metres, about 13 minutes, from Kowloon Tong Station to City University of Hong Kong, with 55% covered and 313 metres in the open. It takes the Festival Walk Lift once, from LG1 up to G. The steepest part is about 23%, over a short stretch.",
+  "A|dry|zh-HK": "呢條路全長697米，大約13分鐘，由九龍塘站去香港城市大學，有蓋路段佔55%，露天路段313米。路線會搭一次又一城升降機，由LG1上G。最斜一段約23%，佔好短距離。",
+  "A|rain|en": "This route runs from Kowloon Tong Station to City University of Hong Kong, about 697 metres and 13 minutes, with 55% covered and 313 metres in the open. It takes the Festival Walk Lift once, from LG1 up to G. The steepest part is around 23% and covers only a short stretch.",
+  "A|rain|zh-HK": "呢條路由九龍塘站去香港城市大學，全程 697 米，大約 13 分鐘，有蓋路段佔 55%，露天段 313 米。路線會搭一次又一城升降機，由 LG1 上 G。最斜一段約 23%，佔好短距離。",
+  "B|dry|en": "This route runs from Kowloon Tong Station to The Salvation Army, Tai Hang Tung, covering 642 metres in about 11 minutes, with 38% covered and 396 metres in the open. The steepest part is around 10% and lasts only a short stretch.",
+  "B|dry|zh-HK": "呢條路由九龍塘站去救世軍大坑東隊，全程 642 米，大約 11 分鐘，有蓋路段佔 38%，露天路段 396 米。路線最斜一段約 10%，佔好短距離。",
+  "B|rain|en": "This wheelchair and trolley route runs from Kowloon Tong Station to The Salvation Army, Tai Hang Tung, covering 653 metres in about 11 minutes. 62% of it is covered, with 248 metres in the open air and a maximum gradient of 2%, and the Tat Chee Avenue Ramp has a gradient of 8.1%. The route takes the Festival Walk Lift down to G, with 0 stairs and 0 escalators.",
+  "B|rain|zh-HK": "呢條路係輪椅／推車模式，由九龍塘站去救世軍大坑東隊，全長653米，大約11分鐘。沿途有62%有蓋路段，露天路段248米，最大坡度2%，斜道係達之路斜道，斜度8.1%。路線會搭又一城升降機落到G層，全程樓梯同扶手電梯都係0。"
+};
+
+// @@SUM_END@@
+
 /* ===== 2. 狀態 ========================================================= */
 
 var S = {
@@ -788,6 +838,8 @@ var I18N = {
     stairs: '樓梯', slope: '最大坡度',
     cover: '有蓋路段', lift: '升降機',
     qualityTitle: '路線質素',
+    /* 標籤要老實：呢段字係機器寫嘅，唔可以扮成人手撰寫嘅說明。 */
+    aiSummaryLabel: '路線摘要（電腦根據以上數據自動撰寫）',
     minutes: '分鐘', meters: '米',
     start: '開始', pause: '暫停', resume: '繼續',
     repeat: '再講一次', sunny: '晴天', rainy: '雨天',
@@ -906,6 +958,7 @@ var I18N = {
     stairs: 'Stairs', slope: 'Max slope',
     cover: 'Covered', lift: 'Lifts',
     qualityTitle: 'Route quality',
+    aiSummaryLabel: 'Route summary (written by computer from the numbers above)',
     minutes: 'min', meters: 'm',
     start: 'Start', pause: 'Pause', resume: 'Resume',
     repeat: 'Repeat', sunny: 'Sunny', rainy: 'Rainy',
@@ -2978,6 +3031,30 @@ function setPlayButton(stopped) {
 
 function updatePlayButtonLabel() { setPlayButton(false); }
 
+/* 摘要 key：路線|天氣|語言 —— 三個都要對上先顯示。
+ * 天氣一定要入 key：B 線晴天同雨天係**兩條唔同嘅路線**（642 → 653 米，
+ * 0 → 1 次升降機），一段摘要跨天氣共用就會講錯數。 */
+function summaryKey(key, rain, lang) {
+  return key + '|' + (rain ? 'rain' : 'dry') + '|' + lang;
+}
+
+/* 有摘要就顯示，冇就整塊收埋。
+ * 刻意冇 fallback 文字：質素卡本身已經有齊數字同誠實警告，加一句
+ * 模板砌出嚟、扮成摘要嘅嘢只係噪音。 */
+function renderSummary() {
+  var box = document.getElementById('q-ai');
+  if (!box) return;
+  var txt = '';
+  if (S.routeKey && typeof KT_SUMMARIES === 'object' && KT_SUMMARIES) {
+    var v = KT_SUMMARIES[summaryKey(S.routeKey, S.rain, S.lang)];
+    if (typeof v === 'string' && v.trim()) txt = v.trim();
+  }
+  box.hidden = !txt;
+  if (!txt) return;
+  setText('q-ai-label', t('aiSummaryLabel'));
+  setText('q-ai-text', txt);
+}
+
 function renderQuality(route) {
   document.getElementById('quality').hidden = false;
   var st = route.stats;
@@ -3036,6 +3113,10 @@ function renderQuality(route) {
     warns.push(fmt(t('wOpenAir'), { m: Math.round(st.length - st.coveredLen) }));
   }
   setText('q-warn', warns.join(' '));
+
+  /* 摘要放最後：佢係成張卡嘅總結。警告**唔會被摘要取代或者蓋過** ——
+     用戶定嘅硬規矩係「模板警告一律保留」。 */
+  renderSummary();
 }
 
 function estMinutes(route) {
