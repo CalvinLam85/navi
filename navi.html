@@ -57,6 +57,29 @@
 
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;padding:0}
+
+/* ---------- [hidden] 一定要贏 ----------
+ * HTML 嘅 hidden 屬性本身冇任何樣式，佢係靠瀏覽器**預設**樣式表嘅
+ * `[hidden]{display:none}` 生效 —— 而 author 樣式永遠贏過 UA 樣式。
+ * 所以任何一個 `display:` 宣告都會靜靜咁廢掉 hidden，連 specificity
+ * 都唔使爭。實測（headless Chrome，1440×1200）：
+ *
+ *   .map-fallback{display:flex}  →  element.hidden === true（屬性都仲喺度）
+ *                                   但 getComputedStyle().display === 'flex'
+ *                                   盒 566×554，蓋住成張地圖
+ *                                   elementFromPoint(地圖中心) = 橫額嘅 <svg>
+ *                                   而 mapReady=true、canvas 1 個、147 個標記
+ *
+ * 即係「地圖失敗」橫額由第一秒起就長期蓋住一張完全正常嘅地圖 —— 用戶見到
+ * 嘅就係「点开网站看不到地图」。而所有舊有驗證都係讀 el.hidden（讀到 true，
+ * 因為佢真係 true），所以永遠測唔到。呢個係本項目反覆出現嘅失敗形狀：
+ * 檢查嘅係代理指標，唔係件事本身。
+ *
+ * 加 !important 而唔係淨係 `[hidden]{display:none}`：後者同 .map-fallback
+ * 同分，要靠先後次序分勝負，即係下一個加 display 嘅人又會靜靜咁拆返。
+ * 呢條規則放喺最前面，之後任何人加 display 都唔會再重演。
+ * 移除 hidden 屬性之後呢條規則就唔適用，所以 mapFail() 一樣照出橫額。 */
+[hidden]{display:none !important}
 body{
   background:var(--color-bg);
   color:var(--color-ink);
@@ -602,8 +625,19 @@ var CONFIG = {
    * 1:8（12.5%）＝放寬後嘅絕對上限（短距離、有扶手）。三檔照呢兩個數分：
    *   g <= RAMP_OK_G        → 「可以用」
    *   RAMP_OK_G < g <= 上限 → 講出真實坡度
-   *   g > RAMP_MAX_G        → 講出真實坡度 + 明講輪椅自己上唔到
-   * 呢兩個數同 scripts/build_facilities.py 嘅統計門檻係同一對，改要一齊改。 */
+   *   g > RAMP_MAX_G        → 講出真實坡度（「好斜」）
+   * 呢兩個數同 scripts/build_facilities.py 嘅統計門檻係同一對，改要一齊改。
+   *
+   * ⚠ 第三檔原本重有「輪椅自己上唔到」一句，2026-09-23 由用戶明確決定刪走。
+   * 原因唔係句子唔真，係佢只會喺**設施喺路線正上方**嗰陣講得出（設施軌只講
+   * d <= FAC_ON_PATH_D 嘅嘢，8–40 米外嘅斜道交俾旁述軌，而旁述軌從來都冇
+   * 坡度），即係嗰句一定係喺講**用戶自己條無障礙路線**。晴天 B 嘅 #168
+   * （18.1%、d 0.00）就係唯一實例，示範上一播就聽到。
+   *
+   * 呢個係一個知情嘅取捨，唔係修正：app 從此唔會主動講「呢條斜道你上唔到」。
+   * 真要嗰句返嚟，正確做法係改路由（唔好行 #168 條斜道），唔係改措辭。
+   * 標記彈窗同語音用同一對字串（rampTooSteepLabel / nRampTooSteep），
+   * 所以兩邊嘅講法一定一致 —— 改就要一齊改。 */
   RAMP_OK_G: 0.0833,
   RAMP_MAX_G: 0.125,
   /* 設施同路線要**同一個高度**先算「喺你條路上」。
@@ -883,8 +917,8 @@ var I18N = {
     nFacilityCovered: '前面{m}米入有蓋通道，唔會淋雨。',
     nRampSteep: '前面{m}米有斜道，坡度大約{p}%，比標準斜，要慢慢嚟。',
     nRampSteepHere: '呢度有斜道，坡度大約{p}%，比標準斜，要慢慢嚟。',
-    nRampTooSteep: '前面{m}米有斜道，坡度大約{p}%，好斜，輪椅自己上唔到。',
-    nRampTooSteepHere: '呢度有斜道，坡度大約{p}%，好斜，輪椅自己上唔到。',
+    nRampTooSteep: '前面{m}米有斜道，坡度大約{p}%，好斜。',
+    nRampTooSteepHere: '呢度有斜道，坡度大約{p}%，好斜。',
     nLandmarkL: '左手邊係{name}，你行啱路喇。',
     nLandmarkR: '右手邊係{name}，你行啱路喇。',
     nLandmarkAhead: '前面就係{name}，你行啱路喇。',
@@ -931,7 +965,7 @@ var I18N = {
     fEscalator: '扶手電梯',
     escWarn: '輪椅用唔到',
     rampSteepLabel: '坡度約 {p}%，比標準斜',
-    rampTooSteepLabel: '坡度約 {p}%，輪椅自己上唔到',
+    rampTooSteepLabel: '坡度約 {p}%，好斜',
     // 唔可以叫用戶「開 http://localhost」：發布之後個 app 就係喺 https 上面行，
     // 而 file:// 本身都開得到（相對路徑嘅 <script src> 冇問題）—— 呢句原本
     // 一直喺度誤導自己嘅成因。改為講實情：資料檔載入失敗，重載就得。
@@ -994,8 +1028,8 @@ var I18N = {
     nFacilityCovered: 'Covered walkway in {m} metres — you will stay dry.',
     nRampSteep: 'Ramp in {m} metres, about {p}% — steeper than the standard. Take it slowly.',
     nRampSteepHere: 'Ramp here, about {p}% — steeper than the standard. Take it slowly.',
-    nRampTooSteep: 'Ramp in {m} metres, about {p}% — very steep. A wheelchair cannot climb this unaided.',
-    nRampTooSteepHere: 'Ramp here, about {p}% — very steep. A wheelchair cannot climb this unaided.',
+    nRampTooSteep: 'Ramp in {m} metres, about {p}% — very steep.',
+    nRampTooSteepHere: 'Ramp here, about {p}% — very steep.',
     nLandmarkL: '{name} is on your left — you are on the right track.',
     nLandmarkR: '{name} is on your right — you are on the right track.',
     nLandmarkAhead: '{name} is just ahead — you are on the right track.',
@@ -1031,7 +1065,7 @@ var I18N = {
     fEscalator: 'escalator',
     escWarn: 'not usable by wheelchair',
     rampSteepLabel: 'about {p}% — steeper than the standard',
-    rampTooSteepLabel: 'about {p}% — a wheelchair cannot climb it unaided',
+    rampTooSteepLabel: 'about {p}% — very steep',
     dataFail: 'Data failed to load. Please reload the page; if it keeps happening, check your connection.',
     mapFailTitle: 'The map is unavailable right now',
     mapFailBody: 'Route planning and voice guidance still work normally.',
@@ -2365,14 +2399,31 @@ function initMap() {
     /* 遲到好過冇到：如果逾時已經報過「載入唔到」，而家要撤回。 */
     mapFailClear();
     mapReady = true;
-    applyHighContrast();
+    applyMapPalette();
     addFacilityMarkers();
     if (S.route) drawRoute(S.route);
   });
 }
 
-/* 高對比圖層塗色 —— 每層獨立 try/catch，唔會因為個別圖層名改咗而爆 */
-function applyHighContrast() {
+/* 地圖配色 —— 只做兩件事，而且係**特登**只做兩件：
+ *   1. 底色 → 專案嘅米色 var(--color-bg)，令地圖同成個 app 同一套色
+ *   2. 所有 symbol（街名、地名）→ 深色字 + 白色光暈，街名喺淺色底上面讀得出
+ * 第 2 點係呢個函數真正嘅價值：低視力用戶要讀嘅係**字**，而 Mapbox 預設
+ * 嘅標籤色喺淺底上面唔夠實。每層獨立 try/catch —— 個別圖層名改咗唔會爆。
+ *
+ * 【唔好加返 water / road 分支 —— 呢度以前有，而且係永遠唔會執行嘅死碼】
+ * 舊版寫 `L.type === 'water'` 同 `L.type === 'road'`，但呢兩個**唔係 Mapbox
+ * 嘅 layer type**，佢哋係 Streets 圖磚入面嘅 source-layer 名。實測線上 style：
+ *   {"background":1,"fill":14,"line":85,"symbol":32,"circle":2}
+ * —— water 同 road 各 0 個，兩個分支由第一日起就冇執行過。（順帶一提，嗰段
+ * 死碼本身都寫錯：`isMajor ? '#FFFFFF' : '#FFFFFF'`，兩邊一樣。）
+ *
+ * 而「照字面整返好」係一個**退步**：白色道路畫喺米色底上面係 #FFFFFF vs
+ * #FFF8F0 ≈ **1.03:1**，即係街道網絡喺步行地圖上直接消失 —— 呢個 app 嘅
+ * 用戶正正就係最需要見到街道嘅人。所以呢兩個分支係**刪咗**，唔係整返好。
+ * 想加真正嘅高對比底圖，就要重新揀色（深色道路 + 淺色底）並量度對比，
+ * 唔可以照舊嗰兩行。 */
+function applyMapPalette() {
   if (!MAP) return;
   var layers = (MAP.getStyle() && MAP.getStyle().layers) || [];
   for (var i = 0; i < layers.length; i++) {
@@ -2380,13 +2431,6 @@ function applyHighContrast() {
     try {
       if (L.type === 'background') {
         MAP.setPaintProperty(L.id, 'background-color', '#FFF8F0');
-      } else if (L.type === 'water') {
-        MAP.setPaintProperty(L.id, 'fill-color', '#BBDEFB');
-      } else if (L.type === 'road') {
-        var isMajor = /motorway|trunk|primary/i.test(L.id);
-        MAP.setPaintProperty(L.id, 'line-color', isMajor ? '#FFFFFF' : '#FFFFFF');
-        MAP.setPaintProperty(L.id, 'line-opacity', 0.95);
-        if (isMajor) MAP.setPaintProperty(L.id, 'line-width', 7);
       } else if (L.type === 'symbol') {
         MAP.setPaintProperty(L.id, 'text-color', '#1A1A1A');
         MAP.setPaintProperty(L.id, 'text-halo-color', '#FFFFFF');
