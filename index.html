@@ -32,7 +32,12 @@
   --color-warn-bg:#FFEBEE;
   --color-ok:#1B5E20;
   --color-ok-bg:#E8F5E9;
-  --color-focus:#FF6D00;
+  /* 焦點環顏色。原本係 #FF6D00，對五個底色全部唔夠 3:1（bg 2.68 · 白 2.82 ·
+     primary-soft 2.36 · warn-bg 2.47 · ok-bg 2.51），即係鍵盤使用者根本睇唔到
+     個環。WCAG 2.4.11 要求焦點指示對相鄰顏色 ≥3:1。下面呢個值係逐個底色計出嚟
+     嘅：最低 4.34:1（primary-soft），其餘 4.55–5.20:1。改顏色之前請重新計，
+     唔好靠肉眼。 */
+  --color-focus:#C43E00;
 
   /* 字級：冇任何一級低於 24px */
   --fs-turn:36px;
@@ -152,6 +157,9 @@ h1 svg{flex:none}
   width:100%;
   border:3px solid var(--color-primary);border-radius:var(--radius);
   background:#DDE3EA;
+  /* Mapbox 自己會補 position:relative，但地圖載入失敗時就冇人補 ——
+     而 .map-fallback 係 absolute，冇 relative 就會飛出容器。 */
+  position:relative;
 }
 /* 矮視窗：hero 佔細啲，否則 hero ＋ 底部面板會高過視口，中間嘅卡片完全睇唔到。
    呢條線以下「面板完整入到 hero 以下」根本冇可能成立（608 高：386+463 > 608），
@@ -162,10 +170,58 @@ h1 svg{flex:none}
     height:clamp(170px, calc(100dvh - 380px), 300px);
   }
 }
+/* 地圖失敗時嘅替代內容。唔可以淨係一個灰色空盒：使用者會以為成個 app 都死咗。
+   呢度講清楚「路線同語音照常」，並且維持 ≥24px 字級同 AAA 對比。 */
+.map-fallback{
+  position:absolute;inset:0;z-index:5;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;padding:20px;text-align:center;
+  background:var(--color-bg);
+}
+.map-fallback-title{font-size:var(--fs-metric);font-weight:800;color:var(--color-primary)}
+.map-fallback-body{
+  font-size:var(--fs-small);font-weight:700;color:var(--color-ink);
+  max-width:24em;
+}
+
 .mapboxgl-ctrl-group button{
   width:var(--tap) !important;height:var(--tap) !important;
 }
 .mapboxgl-ctrl-group button span{transform:scale(1.5)}
+
+/* ---------- Mapbox 內建 UI 一樣要守住設計下限 ----------
+ * 上面嗰條只覆蓋 .mapboxgl-ctrl-group（縮放／指南針）。attribution 係另一個
+ * 獨立控件，Mapbox 預設係 12px 字同 24px 掣 —— 兩者都低過本項目嘅硬性下限
+ * （字 ≥24px、觸控 ≥60px）。第三方來源唔係豁免理由：用呢個 app 嘅人一樣要
+ * 睇得到、篤得中。
+ * 容器永遠 ≤640px，所以 Mapbox 一定用 compact 模式（淨係一個 ⓘ 掣），下面
+ * 兩種狀態都寫齊，唔靠估邊個 class 會出現。 */
+#map .mapboxgl-ctrl-attrib a,
+#map .mapboxgl-ctrl-attrib{
+  font-size:var(--fs-small) !important;
+  line-height:1.35 !important;
+}
+#map .mapboxgl-ctrl-attrib.mapboxgl-compact{
+  min-height:var(--tap) !important;
+  border-radius:var(--radius-sm) !important;
+}
+#map .mapboxgl-ctrl-attrib-button{
+  width:var(--tap) !important;height:var(--tap) !important;
+  background-size:36px 36px !important;
+  background-position:center !important;
+  background-repeat:no-repeat !important;
+}
+/* 展開之後係使用者自己撳嘅，暫時蓋住地圖可以接受；但唔可以長過呢個上限，
+   否則細視窗下會成幅地圖消失。超出就捲。 */
+#map .mapboxgl-ctrl-attrib.mapboxgl-compact .mapboxgl-ctrl-attrib-inner{
+  max-height:240px;overflow:auto;
+  padding:10px 12px !important;
+}
+@media (max-height:720px){
+  #map .mapboxgl-ctrl-attrib.mapboxgl-compact .mapboxgl-ctrl-attrib-inner{
+    max-height:150px;
+  }
+}
 
 /* 設施標記嘅 60px 點擊區。圖形本身維持 40px（任何模式都一樣），
    但觸控目標要 ≥60px —— 長者手指唔可能篤中 40px 嘅圓形。 */
@@ -340,7 +396,22 @@ h1 svg{flex:none}
       </div>
     </div>
 
-    <div id="map" role="img" aria-label="九龍塘無障礙路線地圖"></div>
+    <!-- 地圖載入失敗時嘅替代內容。
+         關鍵事實：路線規劃、設施、旁述全部係本機資料（data/*.js），冇一樣靠
+         Mapbox。所以地圖死咗，導航照樣行得通 —— 訊息一定要講明呢點，
+         唔好令使用者以為成個 app 都壞咗，然後放棄。 -->
+    <div id="map" role="img" aria-label="九龍塘無障礙路線地圖">
+      <div id="map-fallback" class="map-fallback" role="status" hidden>
+        <svg width="72" height="72" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+          <path d="M4 11 L17 6 L31 11 L44 6 V37 L31 42 L17 37 L4 42 Z"
+                fill="none" stroke="#1A237E" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M17 6 V37 M31 11 V42" fill="none" stroke="#1A237E" stroke-width="3"/>
+          <path d="M8 40 L40 8" fill="none" stroke="#B71C1C" stroke-width="5" stroke-linecap="round"/>
+        </svg>
+        <div class="map-fallback-title" id="map-fallback-title">地圖暫時載入唔到</div>
+        <div class="map-fallback-body" id="map-fallback-body">路線規劃同語音導航照常運作，一樣可以用。</div>
+      </div>
+    </div>
   </div>
 
   <div id="panel">
@@ -772,6 +843,8 @@ var I18N = {
     nStartShort: '我哋開始喇，大概{d}米，好快就到。慢慢嚟。',
     nArrive: '到喇，呢度就係{destination}。辛苦晒你。',
     nReport: '好，我記低咗呢度唔通，而家幫你避開佢。',
+    /* 轉天氣中途重算。唔可以講開場白（「全程 X 米」係由頭開始講嘅話）。 */
+    nReplanned: '路線已按新嘅天氣重新規劃，繼續行。',
     /* 搭升降機。有樓層名就講樓層（只有又一城對得上 CONFIG.MALL_LEVELS），
        對唔上就只講方向 —— 報錯層數比唔報更差，所以樓層名一定要查得到先講。 */
     nLiftUp: '而家搭升降機，向上。',
@@ -810,7 +883,13 @@ var I18N = {
     // 唔可以叫用戶「開 http://localhost」：發布之後個 app 就係喺 https 上面行，
     // 而 file:// 本身都開得到（相對路徑嘅 <script src> 冇問題）—— 呢句原本
     // 一直喺度誤導自己嘅成因。改為講實情：資料檔載入失敗，重載就得。
-    dataFail: '資料載入失敗，請重新載入網頁；如果持續出現，請檢查網絡。'
+    dataFail: '資料載入失敗，請重新載入網頁；如果持續出現，請檢查網絡。',
+    /* 地圖失敗。語音導航、路線規劃、設施提示全部係本機資料，唔靠 Mapbox，
+       所以句嘢一定要講「照樣可以用」，唔係講「服務中斷」。 */
+    mapFailTitle: '地圖暫時載入唔到',
+    mapFailBody: '路線規劃同語音導航照常運作，一樣可以用。',
+    mapFailAria: '地圖載入失敗，路線規劃同語音導航仍然可用。',
+    mapFailToast: '地圖載入唔到，但路線同語音導航照常運作。'
   },
   'en': {
     appTitle: 'Accessibility Travel Assistant',
@@ -874,6 +953,7 @@ var I18N = {
     nStartShort: 'Let us start. About {d} metres — not far. Take your time.',
     nArrive: 'Here we are — {destination}. Well done.',
     nReport: 'Noted — I have recorded that this is blocked and I am routing you around it.',
+    nReplanned: 'The route has been recalculated for the new weather. Continuing.',
     nLiftUp: 'We are taking the lift up now.',
     nLiftDown: 'We are taking the lift down now.',
     liftUpWord: 'up', liftDownWord: 'down',
@@ -899,7 +979,11 @@ var I18N = {
     escWarn: 'not usable by wheelchair',
     rampSteepLabel: 'about {p}% — steeper than the standard',
     rampTooSteepLabel: 'about {p}% — a wheelchair cannot climb it unaided',
-    dataFail: 'Data failed to load. Please reload the page; if it keeps happening, check your connection.'
+    dataFail: 'Data failed to load. Please reload the page; if it keeps happening, check your connection.',
+    mapFailTitle: 'The map is unavailable right now',
+    mapFailBody: 'Route planning and voice guidance still work normally.',
+    mapFailAria: 'The map failed to load. Route planning and voice guidance still work.',
+    mapFailToast: 'The map could not load, but route planning and voice guidance still work.'
   }
 };
 
@@ -2041,9 +2125,35 @@ function loadVoices() {
   if (!speechSynth) return;
   VOICES = speechSynth.getVoices() || [];
 }
+
+/* 「裝置冇廣東話語音」呢個警告，之前只喺 setLang() 入面，而 init() 由頭到尾
+ * 冇叫過 setLang —— 即係預設載入路徑永遠唔會講。使用者只會覺得「把聲唔似
+ * 廣東話」，唔知係部機冇，而唔係個 app 求其。
+ *
+ * 仲有第二層，同樣要處理：Chrome 第一次 getVoices() 通常回**空陣列**，之後
+ * 先非同步補上並觸發 voiceschanged。所以檢查要喺兩處都叫（init 同
+ * voiceschanged），而且空陣列唔可以當「冇廣東話」—— 冇資料唔等於壞消息。
+ *
+ * 每次載入只講一次，唔可以變成騷擾。 */
+var voiceWarned = false;
+function checkVoiceAvailability() {
+  if (voiceWarned || S.lang !== 'zh-HK') return;
+  loadVoices();
+  if (!VOICES.length) return;          // 未有資料，等 voiceschanged 再講
+  for (var i = 0; i < VOICES.length; i++) {
+    var lg = (VOICES[i].lang || '').toLowerCase();
+    if (lg.indexOf('zh') === 0 || lg.indexOf('yue') === 0) return;
+  }
+  voiceWarned = true;
+  showToast(t('noVoice'));
+}
+
 if (speechSynth) {
   loadVoices();
-  speechSynth.onvoiceschanged = loadVoices;
+  speechSynth.onvoiceschanged = function () {
+    loadVoices();
+    checkVoiceAvailability();
+  };
 }
 
 /* 語音優先鏈；搵唔到廣東話要明確告知，唔可以靜靜轉英文 */
@@ -2118,8 +2228,64 @@ function resumeSpeech() {
 
 /* ===== 9. 地圖 ========================================================= */
 
+/* 地圖失敗要有聲有色。
+ *
+ * 之前 initMap() 係靜靜咁 return（冇 mapboxgl、或者 constructor 拋錯都係），
+ * 使用者見到嘅就係一個灰色空盒，而 #map 嘅 aria-label 由頭到尾都仍然聲稱
+ * 「九龍塘無障礙路線地圖」—— 螢幕報讀使用者會以為地圖喺度。
+ *
+ * 最重要嘅事實：路線規劃、設施資料、旁述全部係本機 data/*.js，**冇一樣靠
+ * Mapbox**。所以地圖死咗，導航照樣行得通，訊息一定要講明呢點，唔好令使用者
+ * 以為成個 app 都壞咗。呢個函數只改外觀同文字，唔會停任何功能。
+ *
+ * 三條進入路徑：冇 mapboxgl、constructor 拋錯、load 事件逾時。第三條涵蓋
+ * 「CDN 通但 token 被拒／style 抓唔到」—— 嗰陣 constructor 唔會拋錯，
+ * 只係 load 永遠唔會發生。 */
+var MAP_LOAD_TIMEOUT_MS = 10000;
+var mapFailShown = false;
+/* 未壞之前嗰個 aria-label，撤回失敗狀態時要原封不動還原。
+   標記本身係靜態中文（`#map` 上面寫死），所以唔可以靠 t() 砌返 ——
+   記住原本嗰串係唯一穩陣嘅做法。 */
+var mapAriaOriginal = null;
+
+function mapFail() {
+  if (mapFailShown) return;
+  var el = document.getElementById('map');
+  if (el) {
+    if (mapAriaOriginal === null) mapAriaOriginal = el.getAttribute('aria-label') || '';
+    el.setAttribute('aria-label', t('mapFailAria'));
+  }
+  mapFailShown = true;
+  renderMapFail();
+  showToast(t('mapFailToast'));
+}
+
+/* 同 applyI18n() 共用：切語言之後呢段文字要跟住轉。 */
+function renderMapFail() {
+  if (!mapFailShown) return;
+  setText('map-fallback-title', t('mapFailTitle'));
+  setText('map-fallback-body', t('mapFailBody'));
+  var box = document.getElementById('map-fallback');
+  if (box) box.hidden = false;
+}
+
+/* 逾時係一個**估計**，唔係判決：慢網絡上地圖可以 10 秒之後先 load 好。
+   屆時個橫額係錯嘅 —— 一張正常嘅地圖上面蓋住「地圖暫時載入唔到」。
+   所以 load 一到就撤回（連 aria-label 一齊還原）。寧願早講咗再收返，
+   都好過對著一張正常地圖講佢壞咗。
+   個 toast 唔撤回：佢自己會消失，而且佢講嘅「路線同語音導航照常運作」
+   當時係真嘅。 */
+function mapFailClear() {
+  if (!mapFailShown) return;
+  mapFailShown = false;
+  var box = document.getElementById('map-fallback');
+  if (box) box.hidden = true;
+  var el = document.getElementById('map');
+  if (el && mapAriaOriginal !== null) el.setAttribute('aria-label', mapAriaOriginal);
+}
+
 function initMap() {
-  if (!window.mapboxgl) return;
+  if (!window.mapboxgl) { mapFail(); return; }
   mapboxgl.accessToken = CONFIG.MAPBOX_KEY;
 
   try {
@@ -2130,11 +2296,21 @@ function initMap() {
       zoom: CONFIG.ZOOM,
       attributionControl: true
     });
-  } catch (e) { return; }
+  } catch (e) { MAP = null; mapFail(); return; }
+
+  /* style／tiles 抓唔到嘅話 load 永遠唔會 fire。逾時就當失敗。
+     刻意唔掛 MAP.on('error')：個別圖磚失敗係正常嘅（離線、偶發一秒），
+     只有 load 逾時或者根本建唔到先算「地圖唔可用」。用 error 事件判斷會誤報。 */
+  var loadTimer = setTimeout(function () {
+    if (!mapReady) mapFail();
+  }, MAP_LOAD_TIMEOUT_MS);
 
   MAP.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right');
 
   MAP.on('load', function () {
+    clearTimeout(loadTimer);
+    /* 遲到好過冇到：如果逾時已經報過「載入唔到」，而家要撤回。 */
+    mapFailClear();
     mapReady = true;
     applyHighContrast();
     addFacilityMarkers();
@@ -2330,12 +2506,9 @@ function onFacilityClick(f, type) {
    （曾經亦會放大到 56px；2026-09-23 用戶要求全部圖示大小一致，已移除。）
    之前 addFacilityMarkers() 只在 MAP.on('load') 叫過一次，所以呢個效果
    由頭到尾冇生效過。 */
+/* 清空收埋喺 addFacilityMarkers() 度（見嗰個函式嘅註解），所以呢度淨係轉發。 */
 function rebuildFacilityMarkers() {
   if (!MAP) return;
-  for (var i = 0; i < MARKERS.length; i++) {
-    if (MARKERS[i].marker) MARKERS[i].marker.remove();
-  }
-  MARKERS = [];
   addFacilityMarkers();
 }
 
@@ -2393,9 +2566,30 @@ function coveredDrawSet(list, types) {
   return keep;
 }
 
+/* ⚠ 呢個函式一定要**先清再畫**，唔可以淨係畫。
+ *
+ * 佢有兩個互相獨立、非同步嘅入口：
+ *   1. MAP.on('load')                —— 要等 Mapbox 抓完 style／sprite／glyphs／tiles
+ *   2. setRain() ← fetchWeather()    —— init 之後一個 Open-Meteo request
+ * 邊個先到取決於網絡，兩個次序都實測出現過。
+ *
+ * 以前清空嘅責任喺 rebuildFacilityMarkers()，即係只有第二條路徑會清。所以
+ * 只要天氣回應快過地圖 load（一個 request vs 幾個 round trip，通常就係咁），
+ * load 就會喺已經畫好嘅 147 個標記上面**再畫 147 個** —— 地圖上每個設施都有
+ * 兩個圖示，而且會一直維持到用戶揀路線為止（揀路線會經 setRain 重新整理，
+ * 所以之前量到 147 係因為量嗰陣已經開始行路線）。
+ *
+ * 症狀同用戶 2026-09-23 報嘅「有蓋通道嘅標識有重複嘅，顯得比較冗餘」係同一類，
+ * 只係今次係**所有**設施而唔止有蓋通道。清空收埋喺呢度之後，兩個入口都安全，
+ * 唔再靠「入口記得自己清」。
+ */
 function addFacilityMarkers() {
   var FAC = dataOrNull('KT_FACILITIES');
   if (!MAP || !FAC) return;
+  for (var k = 0; k < MARKERS.length; k++) {
+    if (MARKERS[k].marker) MARKERS[k].marker.remove();
+  }
+  MARKERS = [];
   var types = FAC.types;
   var list = FAC.list;
   var drawCover = coveredDrawSet(list, types);
@@ -2671,6 +2865,13 @@ function applyI18n() {
 
   if (S.route) { renderQuality(S.route); drawRoute(S.route); }
   else { setText('instr-text', t('readyStart')); setText('instr-sub', t('pickRoute')); }
+
+  // 地圖失敗嘅訊息都要跟語言轉（函數內部會檢查究竟有冇失敗過）
+  renderMapFail();
+  if (mapFailShown) {
+    var me = document.getElementById('map');
+    if (me) me.setAttribute('aria-label', t('mapFailAria'));
+  }
 }
 
 /* 天氣狀態嘅唯一入口。
@@ -2745,6 +2946,12 @@ function setWheel(v) {
        只重算旁述，唔重新規劃路線 —— 路線唔受呢個開關影響。 */
     S.route.cues = selectCues(S.route.pts, S.route.cum, S.route.zs,
                               S.route.path, S.route.facilities);
+    /* 新 cue 物件嘅 announced 全部係 false，而 cue 觸發條件
+       `s >= c.s - 15` **冇上界** —— 唔標記嘅話，行到一半轉一次輪椅模式，
+       身後每一個 cue 都會即刻連續補播（「左手邊係…，有升降機」一次過
+       講幾句）。呢個係原本就有嘅 bug，唔係重算路線帶出嚟嘅。
+       方向係單向 true，所以唔會影響未行到嘅 cue。 */
+    markPassedAsAnnounced(S.route, S.walk ? S.walk.s : 0);
   }
 }
 
@@ -2982,9 +3189,42 @@ function planPath(s, g, key) {
   return { path: astar(s, g, false, false), via: false };
 }
 
+/* 中途重新規劃之後要返去邊 —— startRoute() 用完即清。
+ *
+ * null 代表「由頭開始」（用戶揀路線）；有值代表「呢次係轉語言／轉天氣／
+ * 其他原地重算」。以前轉語言同轉天氣都係直入 beginAfterIntro()，即係
+ * 位置返 0、播放停低、開場白由頭再講 —— 用戶撳一下，成程路就冇咗。 */
+var resumeAfterReplan = null;
+
+/* 將「已經行過」嘅提示標記為講過。
+ *
+ * 重新規劃會整個換新 route 物件，新物件嘅 announced 旗標全部係 false。
+ * 如果就咁繼續行，觸發器會將身後嘅嘢一次過補播：
+ *   - 旁述軌 `s >= c.s - 15` 冇上界 → 身後所有 cue 會連續播出嚟
+ *   - 地標軌 `s >= l.s` 亦冇上界 → 同樣
+ * （設施軌有 `s <= f.s + 8` 上界，所以唔會補播，但一樣標記無害。）
+ *
+ * 一定要喺 walker.begin() **之後**叫：begin 會建立新嘅 S.walk，喺之前叫
+ * 就會攞住舊嘅 s（或者 null）。
+ *
+ * 方向係單向由 false 變 true —— 呢啲旗標同時係「唔喺路徑上」嘅記錄，
+ * 所以唔可以喺度由 true 變返 false。 */
+function markPassedAsAnnounced(route, s) {
+  if (!route) return;
+  var i;
+  var cues = route.cues || [];
+  for (i = 0; i < cues.length; i++) { if (cues[i].s < s) cues[i].announced = true; }
+  var lms = route.landmarks || [];
+  for (i = 0; i < lms.length; i++) { if (lms[i].s < s) lms[i].announced = true; }
+  var facs = route.facilities || [];
+  for (i = 0; i < facs.length; i++) { if (facs[i].s < s) facs[i].announced = true; }
+}
+
 function startRoute(key) {
   if (!GRAPH) { showToast(t('dataFail')); return; }
   S.routeKey = key;
+  var resume = resumeAfterReplan;
+  resumeAfterReplan = null;
   // S.blocked / S.reports 唔喺呢度清。
   // 用戶報告過「呢度唔通」就係一個事實，唔會因為佢轉語言或者轉天氣而消失。
   // 只有「重新開始」才清（見 btn-reset）。
@@ -3032,6 +3272,23 @@ function startRoute(key) {
   document.getElementById('btn-block').disabled = false;
 
   var speed = (key === 'A') ? CONFIG.WHEEL_SPEED : CONFIG.ELDER_SPEED;
+
+  /* 原地重算（轉語言／轉天氣）—— 保位置、保播放狀態，唔講開場白。
+     開場白係「你將由 A 行到 B，全程 X 米」，行到一半再講係錯嘅，
+     而且 beginAfterIntro() 會停低等佢講完，個點會無啦啦 freeze 幾秒。 */
+  if (resume) {
+    walker.begin(S.route, speed);          // begin 內部已經 run（playing = true）
+    S.walk.s = Math.min(resume.s, S.route.total);
+    markPassedAsAnnounced(S.route, S.walk.s);
+    updateProgress(S.route, S.walk.s);
+    if (!resume.playing) walker.pause();
+    setPlayButton();                       // 標籤由 S.walk 狀態推導，唔靠參數
+    /* 只有路線真係變咗（轉天氣）才值得講一句。轉語言幾何一樣，講
+       「已重新規劃」係講多咗 —— 下一句提示自然會用新語言講。 */
+    if (resume.note) narratorSay(t('nReplanned'), 3, 'replan');
+    if (relaxed) showToast(t('wStairs'));
+    return;
+  }
 
   /* 先講開場白，講完（或等夠上限）才起步 —— 見 beginAfterIntro。
      順序一定要係「先講、後排隊起步」：narratorSay 會同步設 narrator.busy，
@@ -3244,6 +3501,12 @@ function reportBlocked() {
   rebuildFacilityMarkers();   // 改咗路，有蓋標記嘅代表點跟住換（見 coveredDrawSet）
   walker.begin(S.route, S.routeKey === 'A' ? CONFIG.WHEEL_SPEED : CONFIG.ELDER_SPEED);
   setPlayButton(false);
+  /* 換咗路線，舊路線嗰句旁白就唔再成立 —— 但單槽旁白器唔知，佢只會睇
+     優先級。如果嗰刻正講緊一句同等級（3）嘅轉向提示，下面嘅 nReport
+     會因為 `priority <= narrator.priority` 而被丟入 retry，用戶就聽唔到
+     「已記錄」。所以喺呢度明確取消：換路線係旁白器嘅決定，同 §8 嗰條
+     「speak() 唔可以自己 cancel」係同一個原則嘅兩面。 */
+  narratorCancel();
   // 一句講齊「記低咗」同「幫你避開」——唔好拆兩句同等優先級，
   // 單槽旁白器會丟棄第二句（同等優先級唔會搶）。
   narratorSay(t('nReport'), 3, 'report');
@@ -3256,19 +3519,17 @@ function setLang(lang) {
   try { localStorage.setItem('a11y-lang', lang); } catch (e) {}
   applyI18n();
 
-  // 語音可用性檢查 —— 唔可以靜靜轉語言
-  if (lang === 'zh-HK') {
-    loadVoices();
-    var has = false, i;
-    for (i = 0; i < VOICES.length; i++) {
-      if ((VOICES[i].lang || '').toLowerCase().indexOf('zh') === 0 ||
-          (VOICES[i].lang || '').toLowerCase().indexOf('yue') === 0) { has = true; break; }
-    }
-    if (VOICES.length && !has) showToast(t('noVoice'));
-  }
+  // 語音可用性檢查 —— 唔可以靜靜轉語言（同 init 共用同一個函數，
+  // 因為呢個警告以前只喺呢度出，而 init 從未叫過 setLang，即係預設路徑
+  // 永遠唔會講「部機冇廣東話」。見 checkVoiceAvailability。）
+  checkVoiceAvailability();
 
   if (S.route) {
-    // 重建路線以更新地標顯示名同左右
+    /* 重建路線以更新地標顯示名同左右。
+       幾何完全一樣（語言唔入成本函數），所以一定要保住位置同播放狀態 ——
+       以前係直接 startRoute()，即係撳一下語言掣就由起點重新行過、
+       播放停低、開場白再講一次。 */
+    captureResume(false);
     startRoute(S.routeKey);
   }
 }
@@ -3316,11 +3577,31 @@ function fetchWeather() {
     .catch(function () { /* 靜靜咁算：離線係正常狀態 */ });
 }
 
+/* 記低目前位置，等 startRoute() 可以原地接返（見 resumeAfterReplan）。
+ *
+ * 只有「行到一半」才值得記 —— 未起步（s = 0）或者已經到達，由頭開始
+ * 係正確嘅，記住反而會令到達咗嘅路線卡喺終點。
+ *
+ * note：路線真係變咗（轉天氣）就 true，出一句「已重新規劃」；
+ * 幾何一樣（轉語言）就 false，唔好講多餘嘢。 */
+function captureResume(note) {
+  resumeAfterReplan = null;
+  var w = S.walk;
+  if (!w || w.arrived || !(w.s > 0)) return;
+  resumeAfterReplan = { s: w.s, playing: !!w.playing, note: !!note };
+}
+
 function toggleWeather() {
   // 手動撳過之後永遠以用戶為準：preset 同自動偵測都唔再覆寫（見 startRoute）
   S.weatherManual = true;
   setRain(!S.rain, 'manual');
-  if (S.route) startRoute(S.routeKey);
+  if (S.route) {
+    /* 天氣真係會改路線（B：晴 642 米／雨 653 米，仲多一部𨋢），所以呢次
+       要出一句聲；但位置同播放狀態照樣保留 —— 用戶撳天氣係想換路線，
+       唔係想由頭行過。 */
+    captureResume(true);
+    startRoute(S.routeKey);
+  }
 }
 
 /* 輪椅／推車開關。唔重新規劃路線（見 setWheel）—— 所以行緊都可以撳，
@@ -3348,6 +3629,11 @@ function init() {
 
   applyI18n();
   initMap();
+  /* 「部機冇廣東話語音」要喺首屏就講。呢個檢查以前只喺 setLang() 入面，
+     而 init() 由頭到尾冇叫過 setLang —— 即係預設載入路徑永遠唔會出。
+     喺呢度叫一次，另外 voiceschanged 都會再叫（Chrome 第一次
+     getVoices() 通常回空陣列）。 */
+  checkVoiceAvailability();
   fetchWeather();          // 非阻塞、失敗即靜靜咁算（見 fetchWeather）
 
   document.getElementById('lang-zh').addEventListener('click', function () { setLang('zh-HK'); });
