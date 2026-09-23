@@ -167,7 +167,7 @@ h1 svg{flex:none}
 }
 .mapboxgl-ctrl-group button span{transform:scale(1.5)}
 
-/* 設施標記嘅 60px 點擊區。圖形本身維持 40px（雨天 56px），
+/* 設施標記嘅 60px 點擊區。圖形本身維持 40px（任何模式都一樣），
    但觸控目標要 ≥60px —— 長者手指唔可能篤中 40px 嘅圓形。 */
 .fac-hit{
   width:60px;height:60px;
@@ -807,7 +807,10 @@ var I18N = {
     escWarn: '輪椅用唔到',
     rampSteepLabel: '坡度約 {p}%，比標準斜',
     rampTooSteepLabel: '坡度約 {p}%，輪椅自己上唔到',
-    dataFail: '資料載入失敗，請用 http://localhost 開啟（唔可以用 file://）'
+    // 唔可以叫用戶「開 http://localhost」：發布之後個 app 就係喺 https 上面行，
+    // 而 file:// 本身都開得到（相對路徑嘅 <script src> 冇問題）—— 呢句原本
+    // 一直喺度誤導自己嘅成因。改為講實情：資料檔載入失敗，重載就得。
+    dataFail: '資料載入失敗，請重新載入網頁；如果持續出現，請檢查網絡。'
   },
   'en': {
     appTitle: 'Accessibility Travel Assistant',
@@ -896,7 +899,7 @@ var I18N = {
     escWarn: 'not usable by wheelchair',
     rampSteepLabel: 'about {p}% — steeper than the standard',
     rampTooSteepLabel: 'about {p}% — a wheelchair cannot climb it unaided',
-    dataFail: 'Data failed to load. Serve over http://localhost, not file://'
+    dataFail: 'Data failed to load. Please reload the page; if it keeps happening, check your connection.'
   }
 };
 
@@ -2280,7 +2283,7 @@ function facilityPopupText(kind, name, g) {
 /* 標記可唔可以點？
  *
  * 可以，而且要滿足 ≥60px 觸控要求 —— 所以外面包一個 60px 嘅點擊區，
- * 圖形本身照舊 40px（雨天 56px）。用戶報過「點咗冇反應」，原因係呢個
+ * 圖形本身照舊 40px（任何模式都一樣，見下方 rebuildFacilityMarkers）。用戶報過「點咗冇反應」，原因係呢個
  * 功能由頭到尾冇實作過（全檔冇 Popup、標記冇 click handler）。
  *
  * 標記維持 aria-hidden="true"：236 個裝飾性標記唔應該淹沒報讀器
@@ -2323,7 +2326,8 @@ function onFacilityClick(f, type) {
   narratorSay(text, 0, 'facinfo', false);
 }
 
-/* 重畫設施標記。天氣轉嘅時候一定要重畫 —— 有蓋通道標記會放大同加光暈。
+/* 重畫設施標記。天氣轉嘅時候一定要重畫 —— 有蓋通道標記會加光暈。
+   （曾經亦會放大到 56px；2026-09-23 用戶要求全部圖示大小一致，已移除。）
    之前 addFacilityMarkers() 只在 MAP.on('load') 叫過一次，所以呢個效果
    由頭到尾冇生效過。 */
 function rebuildFacilityMarkers() {
@@ -2404,19 +2408,21 @@ function addFacilityMarkers() {
     // 即係用地圖話輪椅用戶「呢度有升降機」。名稱同類型矛盾時以名為準。
     var kind = facilityKind(f, type);
     if (kind === 'covered' && !drawCover[i]) continue;   // 同一個結構：已經畫過
-    // 雨天模式：有蓋通道標記放大 + 光暈
-    var big = S.rain && kind === 'covered';
-    var px = big ? 56 : 40;
+    // 雨天模式：有蓋通道標記加光暈。
+    // 唔再放大 —— 用戶 2026-09-23 要求所有設施圖示大小一致（以斜道為準）。
+    // 之前有蓋通道喺雨天會變 56px，比其他設施嘅 40px 大四成。
+    var glow = S.rain && kind === 'covered';
+    var px = 40;
     // 輪椅／推車模式之下，扶手電梯係用唔到嘅設施 —— 標記劃斜線講明
     var off = (kind === 'escalator' && S.wheel);
 
-    // 60px 點擊區包住圖形（圖形本身維持 40/56px，唔會被拉大）
+    // 60px 點擊區包住圖形（圖形本身維持 40px，唔會被拉大）
     var el = document.createElement('div');
     el.className = 'fac-hit';
     el.style.cssText = 'width:60px;height:60px;display:flex;align-items:center;' +
       'justify-content:center;cursor:pointer;';
     el.innerHTML = '<span style="display:block;width:' + px + 'px;height:' + px +
-      'px;' + (big ? 'filter:drop-shadow(0 0 10px var(--color-covered-glow));' : '') +
+      'px;' + (glow ? 'filter:drop-shadow(0 0 10px var(--color-covered-glow));' : '') +
       '">' + facilitySvg(kind, px, off) + '</span>';
     el.setAttribute('aria-hidden', 'true');
 
